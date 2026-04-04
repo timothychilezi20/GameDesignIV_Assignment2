@@ -10,17 +10,35 @@ public class NetworkFPSPlayer : NetworkBehaviour
     [SerializeField] private Transform cameraPivot;
     [SerializeField] private Camera playerCamera;
 
-    [Header("Player Settings")]
+    [Header("Movement")]
     [SerializeField] private float moveSpeed = 5f;
+    [SerializeField] private float jumpHeight = 2f;
+    [SerializeField] private float gravity = -9.18f;
+
+    [Header("Look")]
     [SerializeField] private float lookSensitivity = 2f;
     [SerializeField] private float maxPitch = 80f;
 
-    private PlayerInput playerInput; 
-    private InputAction moveAction;
-    private InputAction lookAction;
+    [Header("Dash")]
+    [SerializeField] private float dashSpeed = 12f;
+    [SerializeField] private float dashDuration = 0.2f;
+    [SerializeField] private float dashCooldown = 1f;
+
+    private PlayerInput playerInput;
     private CharacterController characterController;
 
-    private float pitch; 
+    private InputAction moveAction;
+    private InputAction lookAction;
+    private InputAction jumpAction;
+    private InputAction dashAction; 
+   
+    private float pitch;
+    private float verticalVelocity;
+
+    private bool isDashing;
+    private float dashTimeRemaining;
+    private float dashCooldownRemaining;
+    private Vector3 dashDirection; 
 
     public override void OnNetworkSpawn()
     {
@@ -58,6 +76,8 @@ public class NetworkFPSPlayer : NetworkBehaviour
 
         moveAction = playerInput.actions["Move"];
         lookAction = playerInput.actions["Look"];
+        jumpAction = playerInput.actions["Jump"];
+        dashAction = playerInput.actions["Dash"];
 
         if (moveAction == null)
         {
@@ -73,6 +93,13 @@ public class NetworkFPSPlayer : NetworkBehaviour
             return;
         }
 
+        if (jumpAction == null)
+        {
+            Debug.LogError("Jump action is not defined in PlayerInput actions.", this);
+            enabled = false;
+            return; 
+        }
+
         if (cameraPivot == null)
         {
             Debug.LogError("Camera Pivot is not assigned.", this);
@@ -80,12 +107,34 @@ public class NetworkFPSPlayer : NetworkBehaviour
             return;
         }
 
-        moveAction.Enable();
-        lookAction.Enable();
+        moveAction?.Enable();
+        lookAction?.Enable();
+        jumpAction?.Enable();
+        dashAction?.Enable();
 
         if (playerCamera != null)
         {
             playerCamera.enabled = true;
+        }
+
+        Cursor.lockState = CursorLockMode.Locked;
+        Cursor.visible = false;
+    }
+
+    public override void OnNetworkDespawn()
+    {
+        if (!IsOwner)
+        {
+            return;
+        }
+
+        moveAction?.Disable();
+        lookAction?.Disable();
+        jumpAction?.Disable();
+        dashAction?.Disable();
+        if (playerCamera != null)
+        {
+            playerCamera.enabled = false;
         }
     }
 
@@ -96,10 +145,13 @@ public class NetworkFPSPlayer : NetworkBehaviour
             return; 
         }
 
-        if (moveAction == null || lookAction == null || characterController == null || cameraPivot == null)
+        if (moveAction == null || lookAction == null || characterController == null || cameraPivot == null || jumpAction == null || dashAction == null)
         {
             return; 
         }
+
+        HandleLook();
+        HandleMovement(); 
 
         Vector2 m = moveAction.ReadValue<Vector2>();
         Vector3 move = transform.right * m.x + transform.forward * m.y;
@@ -113,5 +165,76 @@ public class NetworkFPSPlayer : NetworkBehaviour
         cameraPivot.localEulerAngles = new Vector3(pitch, 0f, 0f);
 
         Debug.Log(moveAction.ReadValue<Vector2>());
+    }
+
+    private void HandleLook()
+    {
+        Vector2 look = lookAction.ReadValue<Vector2>() * lookSensitivity;
+        transform.Rotate(0f, look.x, 0f);
+        pitch -= look.y;
+        pitch = Mathf.Clamp(pitch, -maxPitch, maxPitch);
+        cameraPivot.localEulerAngles = new Vector3(pitch, 0f, 0f);
+    }
+
+    private void HandleMovement()
+    {
+        Vector2 input = moveAction.ReadValue<Vector2>();
+
+        Vector3 move = transform.right * input.x + transform.forward * input.y;
+        if (move.magnitude > 1f)
+        {
+            move.Normalize();
+        }
+
+        if (characterController.isGrounded && verticalVelocity < 0f)
+        {
+            verticalVelocity = -2f; 
+        }
+
+        if (jumpAction.WasPressedThisFrame() && characterController.isGrounded && !isDashing)
+        {
+            verticalVelocity = Mathf.Sqrt(jumpHeight * -2f * gravity); 
+        }
+
+        if (dashCooldownRemaining > 0f)
+        {
+            dashCooldownRemaining -= Time.deltaTime;
+        }
+
+        if (dashAction.WasPressedThisFrame() && dashCooldownRemaining <= 0f && !isDashing)
+        {
+            isDashing = true;
+            dashTimeRemaining = dashDuration;
+            dashCooldownRemaining = dashCooldown;
+
+            dashDirection = move.sqrMagnitude > 0.01f ? move : transform.forward;
+            dashDirection.y = 0f;
+            dashDirection.Normalize();
+        }
+
+        Vector3 horizontalVelocity; 
+
+        if (isDashing)
+        {
+            horizontalVelocity = dashDirection * dashSpeed;
+            dashTimeRemaining -= Time.deltaTime;
+
+            if (dashTimeRemaining <= 0f)
+            {
+                isDashing = false;
+            }
+        }
+
+        else
+        {
+            horizontalVelocity = move * moveSpeed;
+        }
+
+        verticalVelocity += gravity * Time.deltaTime;
+
+        Vector3 finalMove = horizontalVelocity;
+        finalMove.y = verticalVelocity;
+
+        characterController.Move(finalMove * Time.deltaTime);
     }
 }
