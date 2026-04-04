@@ -110,6 +110,17 @@
                 },
                 {
                     "name": "",
+                    "id": "4419a9f4-9ca6-40d9-865e-13e633f4998a",
+                    "path": "<Gamepad>/leftStick",
+                    "interactions": "",
+                    "processors": "",
+                    "groups": "",
+                    "action": "Move",
+                    "isComposite": false,
+                    "isPartOfComposite": false
+                },
+                {
+                    "name": "",
                     "id": "d9ddab1e-ee1c-4466-b9e9-a5a8e585f7b7",
                     "path": "<Mouse>/leftButton",
                     "interactions": "",
@@ -132,8 +143,30 @@
                 },
                 {
                     "name": "",
+                    "id": "0b2c9d16-8b57-4af0-89e6-eab401946c32",
+                    "path": "<Gamepad>/buttonSouth",
+                    "interactions": "",
+                    "processors": "",
+                    "groups": "",
+                    "action": "Jump",
+                    "isComposite": false,
+                    "isPartOfComposite": false
+                },
+                {
+                    "name": "",
                     "id": "3e6ba9ae-a622-4ac0-ad53-860751c31013",
                     "path": "<Mouse>/delta",
+                    "interactions": "",
+                    "processors": "",
+                    "groups": "",
+                    "action": "Look",
+                    "isComposite": false,
+                    "isPartOfComposite": false
+                },
+                {
+                    "name": "",
+                    "id": "d6435eb1-1f31-429c-8527-9bbc720c2efa",
+                    "path": "",
                     "interactions": "",
                     "processors": "",
                     "groups": "",
