@@ -132,7 +132,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d5a57f767e5e46a458fc5d3c628d0cbb, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Unity.Netcode.Runtime::Unity.Netcode.NetworkObject
-  GlobalObjectIdHash: 208219422
+  GlobalObjectIdHash: 2695798360
   InScenePlacedSourceGlobalObjectIdHash: 3119006671
   DeferredDespawnTick: 0
   Ownership: 1
@@ -261,9 +261,14 @@ MonoBehaviour:
   ShowTopMostFoldoutHeaderGroup: 1
   cameraPivot: {fileID: 7111737965711398890}
   playerCamera: {fileID: 1201444363786785832}
-  moveSpeed: 5
+  moveSpeed: 2
+  jumpHeight: 2
+  gravity: -9.18
   lookSensitivity: 2
   maxPitch: 80
+  dashSpeed: 8
+  dashDuration: 0.2
+  dashCooldown: 1
 --- !u!1 &7399255556014627148
 GameObject:
   m_ObjectHideFlags: 0
