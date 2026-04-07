@@ -37,7 +37,7 @@
                     "name": "Look",
                     "type": "Value",
                     "id": "0151269c-5463-4fd5-80da-aad44e851010",
-                    "expectedControlType": "Delta",
+                    "expectedControlType": "Vector2",
                     "processors": "",
                     "interactions": "",
                     "initialStateCheck": true
@@ -166,7 +166,7 @@
                 {
                     "name": "",
                     "id": "d6435eb1-1f31-429c-8527-9bbc720c2efa",
-                    "path": "",
+                    "path": "<Gamepad>/rightStick",
                     "interactions": "",
                     "processors": "",
                     "groups": "",
@@ -178,6 +178,17 @@
                     "name": "",
                     "id": "064f94b2-897b-413a-95de-b925184f501b",
                     "path": "<Keyboard>/shift",
+                    "interactions": "",
+                    "processors": "",
+                    "groups": "",
+                    "action": "Dash",
+                    "isComposite": false,
+                    "isPartOfComposite": false
+                },
+                {
+                    "name": "",
+                    "id": "cfc5bc5a-30d4-47f9-a527-4a34bb339c1b",
+                    "path": "<Gamepad>/buttonEast",
                     "interactions": "",
                     "processors": "",
                     "groups": "",
