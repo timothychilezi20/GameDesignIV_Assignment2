@@ -1,6 +1,7 @@
 using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.InputSystem;
+using UnityEngine.UI;
 
 [RequireComponent(typeof(CharacterController))]
 [RequireComponent(typeof(PlayerInput))]
@@ -13,7 +14,7 @@ public class NetworkFPSPlayer : NetworkBehaviour
     [Header("Movement")]
     [SerializeField] private float moveSpeed = 5f;
     [SerializeField] private float jumpHeight = 2f;
-    [SerializeField] private float gravity = -9.18f;
+    [SerializeField] private float gravity = -20f;
 
     [Header("Look")]
     [SerializeField] private float lookSensitivity = 2f;
@@ -24,31 +25,49 @@ public class NetworkFPSPlayer : NetworkBehaviour
     [SerializeField] private float dashDuration = 0.2f;
     [SerializeField] private float dashCooldown = 1f;
 
+    [Header("Health")]
+    [SerializeField] private float maxHealth = 100f;
+
+    [Header("UI")]
+    [SerializeField] private Slider healthBarUI;
+
+    private NetworkVariable<float> currentHealth = new NetworkVariable<float>(
+       100f,
+       NetworkVariableReadPermission.Everyone,
+       NetworkVariableWritePermission.Server
+   );
+
     private PlayerInput playerInput;
     private CharacterController characterController;
 
     private InputAction moveAction;
     private InputAction lookAction;
     private InputAction jumpAction;
-    private InputAction dashAction; 
-   
+    private InputAction dashAction;
+
     private float pitch;
     private float verticalVelocity;
 
     private bool isDashing;
     private float dashTimeRemaining;
     private float dashCooldownRemaining;
-    private Vector3 dashDirection; 
+    private Vector3 dashDirection;
+
+    public bool IsAlive { get; private set; } = true;
 
     public override void OnNetworkSpawn()
     {
         characterController = GetComponent<CharacterController>();
         playerInput = GetComponent<PlayerInput>();
 
+        currentHealth.OnValueChanged += OnHealthChanged; 
+
         if (!IsOwner)
         {
-            if (playerCamera) playerCamera.enabled = false;
-            if (playerInput) playerInput.enabled = false;
+            if (playerCamera != null) playerCamera.enabled = false;
+            if (playerInput != null) playerInput.enabled = false;
+            if (healthBarUI != null) healthBarUI.gameObject.SetActive(false);
+
             enabled = false;
             return;
         }
@@ -97,7 +116,14 @@ public class NetworkFPSPlayer : NetworkBehaviour
         {
             Debug.LogError("Jump action is not defined in PlayerInput actions.", this);
             enabled = false;
-            return; 
+            return;
+        }
+
+        if (dashAction == null)
+        {
+            Debug.LogError("Dash action is not defined in PlayerInput actions.", this);
+            enabled = false;
+            return;
         }
 
         if (cameraPivot == null)
@@ -107,14 +133,21 @@ public class NetworkFPSPlayer : NetworkBehaviour
             return;
         }
 
-        moveAction?.Enable();
-        lookAction?.Enable();
-        jumpAction?.Enable();
-        dashAction?.Enable();
+        moveAction.Enable();
+        lookAction.Enable();
+        jumpAction.Enable();
+        dashAction.Enable();
 
         if (playerCamera != null)
         {
             playerCamera.enabled = true;
+        }
+
+        if (healthBarUI != null)
+        {
+            healthBarUI.gameObject.SetActive(true); 
+            healthBarUI.maxValue = maxHealth;
+            healthBarUI.value = currentHealth.Value;
         }
 
         Cursor.lockState = CursorLockMode.Locked;
@@ -123,6 +156,8 @@ public class NetworkFPSPlayer : NetworkBehaviour
 
     public override void OnNetworkDespawn()
     {
+        currentHealth.OnValueChanged -= OnHealthChanged;
+
         if (!IsOwner)
         {
             return;
@@ -132,6 +167,7 @@ public class NetworkFPSPlayer : NetworkBehaviour
         lookAction?.Disable();
         jumpAction?.Disable();
         dashAction?.Disable();
+
         if (playerCamera != null)
         {
             playerCamera.enabled = false;
@@ -142,35 +178,24 @@ public class NetworkFPSPlayer : NetworkBehaviour
     {
         if (!IsOwner || !IsSpawned)
         {
-            return; 
+            return;
         }
 
-        if (moveAction == null || lookAction == null || characterController == null || cameraPivot == null || jumpAction == null || dashAction == null)
+        if (moveAction == null || lookAction == null || jumpAction == null || dashAction == null || characterController == null || cameraPivot == null)
         {
-            return; 
+            return;
         }
 
         HandleLook();
-        HandleMovement(); 
-
-        Vector2 m = moveAction.ReadValue<Vector2>();
-        Vector3 move = transform.right * m.x + transform.forward * m.y;
-        characterController.Move(move * moveSpeed * Time.deltaTime);
-
-        Vector2 look = lookAction.ReadValue<Vector2>() * lookSensitivity;
-        transform.Rotate(0f, look.x, 0f);
-
-        pitch -= look.y;
-        pitch = Mathf.Clamp(pitch, -maxPitch, maxPitch);
-        cameraPivot.localEulerAngles = new Vector3(pitch, 0f, 0f);
-
-        Debug.Log(moveAction.ReadValue<Vector2>());
+        HandleMovement();
     }
 
     private void HandleLook()
     {
         Vector2 look = lookAction.ReadValue<Vector2>() * lookSensitivity;
+
         transform.Rotate(0f, look.x, 0f);
+
         pitch -= look.y;
         pitch = Mathf.Clamp(pitch, -maxPitch, maxPitch);
         cameraPivot.localEulerAngles = new Vector3(pitch, 0f, 0f);
@@ -188,12 +213,12 @@ public class NetworkFPSPlayer : NetworkBehaviour
 
         if (characterController.isGrounded && verticalVelocity < 0f)
         {
-            verticalVelocity = -2f; 
+            verticalVelocity = -2f;
         }
 
         if (jumpAction.WasPressedThisFrame() && characterController.isGrounded && !isDashing)
         {
-            verticalVelocity = Mathf.Sqrt(jumpHeight * -2f * gravity); 
+            verticalVelocity = Mathf.Sqrt(jumpHeight * -2f * gravity);
         }
 
         if (dashCooldownRemaining > 0f)
@@ -212,7 +237,7 @@ public class NetworkFPSPlayer : NetworkBehaviour
             dashDirection.Normalize();
         }
 
-        Vector3 horizontalVelocity; 
+        Vector3 horizontalVelocity;
 
         if (isDashing)
         {
@@ -224,7 +249,6 @@ public class NetworkFPSPlayer : NetworkBehaviour
                 isDashing = false;
             }
         }
-
         else
         {
             horizontalVelocity = move * moveSpeed;
@@ -236,5 +260,61 @@ public class NetworkFPSPlayer : NetworkBehaviour
         finalMove.y = verticalVelocity;
 
         characterController.Move(finalMove * Time.deltaTime);
+    }
+
+    private void OnHealthChanged(float previousValue, float newValue)
+    {
+        if (healthBarUI != null && IsOwner)
+        {
+            healthBarUI.maxValue = maxHealth;
+            healthBarUI.value = newValue;
+        }
+
+        IsAlive = newValue > 0f;
+    }
+
+    public void TakeDamage(float damage)
+    {
+        if (!IsServer) return;
+
+        currentHealth.Value -= damage;
+        currentHealth.Value = Mathf.Clamp(currentHealth.Value, 0f, maxHealth);
+
+        if (currentHealth.Value <= 0f)
+        {
+            currentHealth.Value = 0f;
+            IsAlive = false;
+            Die();
+        }
+    }
+
+
+    public void AddHealth(float addedHealth)
+    {
+        if (!IsServer) return;
+
+        currentHealth.Value += addedHealth;
+        currentHealth.Value = Mathf.Clamp(currentHealth.Value, 0f, maxHealth);
+
+        if (currentHealth.Value > 0f)
+        {
+            IsAlive = true;
+        }
+    }
+
+    private void Die()
+    {
+        Debug.Log("Player died!");
+
+        currentHealth.Value = maxHealth;
+        IsAlive = true;
+        transform.position = Vector3.zero;
+
+        verticalVelocity = 0f;
+        isDashing = false;
+        dashTimeRemaining = 0f;
+
+        Cursor.visible = true;
+        Cursor.lockState = CursorLockMode.None;
     }
 }
