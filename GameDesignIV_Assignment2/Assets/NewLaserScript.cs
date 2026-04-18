@@ -1,13 +1,19 @@
 using UnityEngine;
+using Unity.Netcode;
 
-public class NewLaserScript : MonoBehaviour
+[RequireComponent(typeof(LineRenderer))]
+public class NewLaserScript : NetworkBehaviour
 {
     private LineRenderer lineRenderer;
+
     [SerializeField] private Transform startPoint;
+    [SerializeField] private float damagePerSecond = 25f;
+    [SerializeField] private float maxDistance = 100f;
 
     void Start()
     {
         lineRenderer = GetComponent<LineRenderer>();
+
         if (lineRenderer == null)
         {
             Debug.LogError("LineRenderer component is missing.", this);
@@ -18,21 +24,27 @@ public class NewLaserScript : MonoBehaviour
     void Update()
     {
         lineRenderer.SetPosition(0, startPoint.position);
-        RaycastHit hit;
-        if (Physics.Raycast(transform.position, -transform.right, out hit))
-        {
-            if (hit.collider)
-            {
-                lineRenderer.SetPosition(1, hit.point);
-            }
 
-            if (hit.transform.tag == "Player")
+        RaycastHit hit;
+
+        if (Physics.Raycast(startPoint.position, startPoint.forward, out hit, maxDistance))
+        {
+            lineRenderer.SetPosition(1, hit.point);
+
+            if (hit.collider.CompareTag("Player"))
             {
-                Destroy(hit.transform.gameObject);
-                Debug.Log("Player hit!");
+                NetworkFPSPlayer player = hit.collider.GetComponent<NetworkFPSPlayer>();
+
+                if (player != null && IsServer)
+                {
+                    float damage = damagePerSecond * Time.deltaTime;
+                    player.TakeDamage(damage);
+                }
             }
         }
-
-        else lineRenderer.SetPosition(1, -transform.forward * 5000f);
+        else
+        {
+            lineRenderer.SetPosition(1, startPoint.position + startPoint.forward * maxDistance);
+        }
     }
 }
