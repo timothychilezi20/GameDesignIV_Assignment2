@@ -7,18 +7,10 @@ using UnityEngine.UI;
 [RequireComponent(typeof(PlayerInput))]
 public class NetworkFPSPlayer : NetworkBehaviour
 {
-    [Header("Player Components")]
-    [SerializeField] private Transform cameraPivot;
-    [SerializeField] private Camera playerCamera;
-
     [Header("Movement")]
     [SerializeField] private float moveSpeed = 5f;
     [SerializeField] private float jumpHeight = 2f;
     [SerializeField] private float gravity = -20f;
-
-    [Header("Look")]
-    [SerializeField] private float lookSensitivity = 2f;
-    [SerializeField] private float maxPitch = 80f;
 
     [Header("Dash")]
     [SerializeField] private float dashSpeed = 12f;
@@ -32,20 +24,18 @@ public class NetworkFPSPlayer : NetworkBehaviour
     [SerializeField] private Slider healthBarUI;
 
     private NetworkVariable<float> currentHealth = new NetworkVariable<float>(
-       100f,
-       NetworkVariableReadPermission.Everyone,
-       NetworkVariableWritePermission.Server
-   );
+        100f,
+        NetworkVariableReadPermission.Everyone,
+        NetworkVariableWritePermission.Server
+    );
 
     private PlayerInput playerInput;
     private CharacterController characterController;
 
     private InputAction moveAction;
-    private InputAction lookAction;
     private InputAction jumpAction;
     private InputAction dashAction;
 
-    private float pitch;
     private float verticalVelocity;
 
     private bool isDashing;
@@ -60,92 +50,27 @@ public class NetworkFPSPlayer : NetworkBehaviour
         characterController = GetComponent<CharacterController>();
         playerInput = GetComponent<PlayerInput>();
 
-        currentHealth.OnValueChanged += OnHealthChanged; 
+        currentHealth.OnValueChanged += OnHealthChanged;
 
         if (!IsOwner)
         {
-            if (playerCamera != null) playerCamera.enabled = false;
             if (playerInput != null) playerInput.enabled = false;
             if (healthBarUI != null) healthBarUI.gameObject.SetActive(false);
-
-            enabled = false;
-            return;
-        }
-
-        if (characterController == null)
-        {
-            Debug.LogError("CharacterController component is missing.", this);
-            enabled = false;
-            return;
-        }
-
-        if (playerInput == null)
-        {
-            Debug.LogError("PlayerInput component is missing.", this);
-            enabled = false;
-            return;
-        }
-
-        if (playerInput.actions == null)
-        {
-            Debug.LogError("PlayerInput actions are not set up.", this);
             enabled = false;
             return;
         }
 
         moveAction = playerInput.actions["Move"];
-        lookAction = playerInput.actions["Look"];
         jumpAction = playerInput.actions["Jump"];
         dashAction = playerInput.actions["Dash"];
 
-        if (moveAction == null)
-        {
-            Debug.LogError("Move action is not defined in PlayerInput actions.", this);
-            enabled = false;
-            return;
-        }
-
-        if (lookAction == null)
-        {
-            Debug.LogError("Look action is not defined in PlayerInput actions.", this);
-            enabled = false;
-            return;
-        }
-
-        if (jumpAction == null)
-        {
-            Debug.LogError("Jump action is not defined in PlayerInput actions.", this);
-            enabled = false;
-            return;
-        }
-
-        if (dashAction == null)
-        {
-            Debug.LogError("Dash action is not defined in PlayerInput actions.", this);
-            enabled = false;
-            return;
-        }
-
-        if (cameraPivot == null)
-        {
-            Debug.LogError("Camera Pivot is not assigned.", this);
-            enabled = false;
-            return;
-        }
-
         moveAction.Enable();
-        lookAction.Enable();
         jumpAction.Enable();
         dashAction.Enable();
 
-        if (playerCamera != null)
-        {
-            playerCamera.enabled = true;
-        }
-
         if (healthBarUI != null)
         {
-            healthBarUI.gameObject.SetActive(true); 
+            healthBarUI.gameObject.SetActive(true);
             healthBarUI.maxValue = maxHealth;
             healthBarUI.value = currentHealth.Value;
         }
@@ -158,74 +83,53 @@ public class NetworkFPSPlayer : NetworkBehaviour
     {
         currentHealth.OnValueChanged -= OnHealthChanged;
 
-        if (!IsOwner)
-        {
-            return;
-        }
+        if (!IsOwner) return;
 
         moveAction?.Disable();
-        lookAction?.Disable();
         jumpAction?.Disable();
         dashAction?.Disable();
-
-        if (playerCamera != null)
-        {
-            playerCamera.enabled = false;
-        }
     }
 
     private void Update()
     {
-        if (!IsOwner || !IsSpawned)
-        {
-            return;
-        }
+        if (!IsOwner || !IsSpawned) return;
 
-        if (moveAction == null || lookAction == null || jumpAction == null || dashAction == null || characterController == null || cameraPivot == null)
-        {
-            return;
-        }
-
-        HandleLook();
         HandleMovement();
-    }
-
-    private void HandleLook()
-    {
-        Vector2 look = lookAction.ReadValue<Vector2>() * lookSensitivity;
-
-        transform.Rotate(0f, look.x, 0f);
-
-        pitch -= look.y;
-        pitch = Mathf.Clamp(pitch, -maxPitch, maxPitch);
-        cameraPivot.localEulerAngles = new Vector3(pitch, 0f, 0f);
     }
 
     private void HandleMovement()
     {
         Vector2 input = moveAction.ReadValue<Vector2>();
 
-        Vector3 move = transform.right * input.x + transform.forward * input.y;
+        Vector3 forward = transform.forward;
+        Vector3 right = transform.right;
+
+        forward.y = 0f;
+        right.y = 0f;
+
+        forward.Normalize();
+        right.Normalize();
+
+        Vector3 move = forward * input.y + right * input.x;
+
         if (move.magnitude > 1f)
-        {
             move.Normalize();
-        }
 
+        // Gravity
         if (characterController.isGrounded && verticalVelocity < 0f)
-        {
             verticalVelocity = -2f;
-        }
 
+        // Jump
         if (jumpAction.WasPressedThisFrame() && characterController.isGrounded && !isDashing)
         {
             verticalVelocity = Mathf.Sqrt(jumpHeight * -2f * gravity);
         }
 
+        // Dash cooldown
         if (dashCooldownRemaining > 0f)
-        {
             dashCooldownRemaining -= Time.deltaTime;
-        }
 
+        // Dash start
         if (dashAction.WasPressedThisFrame() && dashCooldownRemaining <= 0f && !isDashing)
         {
             isDashing = true;
@@ -245,9 +149,7 @@ public class NetworkFPSPlayer : NetworkBehaviour
             dashTimeRemaining -= Time.deltaTime;
 
             if (dashTimeRemaining <= 0f)
-            {
                 isDashing = false;
-            }
         }
         else
         {
@@ -288,7 +190,6 @@ public class NetworkFPSPlayer : NetworkBehaviour
         }
     }
 
-
     public void AddHealth(float addedHealth)
     {
         if (!IsServer) return;
@@ -297,9 +198,7 @@ public class NetworkFPSPlayer : NetworkBehaviour
         currentHealth.Value = Mathf.Clamp(currentHealth.Value, 0f, maxHealth);
 
         if (currentHealth.Value > 0f)
-        {
             IsAlive = true;
-        }
     }
 
     private void Die()
@@ -308,6 +207,7 @@ public class NetworkFPSPlayer : NetworkBehaviour
 
         currentHealth.Value = maxHealth;
         IsAlive = true;
+
         transform.position = Vector3.zero;
 
         verticalVelocity = 0f;
