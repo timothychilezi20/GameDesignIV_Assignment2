@@ -43,6 +43,8 @@ public class NetworkFPSPlayer : NetworkBehaviour
     private float dashCooldownRemaining;
     private Vector3 dashDirection;
 
+    [SerializeField] private MapManager mapManager;
+
     public bool IsAlive { get; private set; } = true;
 
     public override void OnNetworkSpawn()
@@ -77,6 +79,15 @@ public class NetworkFPSPlayer : NetworkBehaviour
 
         Cursor.lockState = CursorLockMode.Locked;
         Cursor.visible = false;
+
+        if (IsServer && mapManager != null)
+        {
+            Transform spawn = mapManager.GetActiveLaunchPoint();
+
+            characterController.enabled = false;
+            transform.SetPositionAndRotation(spawn.position, spawn.rotation);
+            characterController.enabled = true;
+        }
     }
 
     public override void OnNetworkDespawn()
