@@ -129,7 +129,7 @@ public class LaserBeam : MonoBehaviour
             Vector2 intersection = p + t * r;
             hitPoint = new Vector3(intersection.x, a1.y, intersection.y);
             Debug.DrawLine(hitPoint, hitPoint);
-            Debug.Log("intersectingLines");
+          
             return true;
         }
 

@@ -5,6 +5,7 @@ TagManager:
   serializedVersion: 3
   tags:
   - Reflective
+  - WallSpawn
   layers:
   - Default
   - TransparentFX

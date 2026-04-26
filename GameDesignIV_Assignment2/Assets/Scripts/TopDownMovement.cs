@@ -90,6 +90,11 @@ public class PlayerController : MonoBehaviour
         speedMultiplier = multiplier;
     }
 
+    public void SpeedBoost(float SpeedMultiplier)
+    {
+        speedMultiplier = SpeedMultiplier;
+    }
+
     public void ResetSpeedMultiplier()
     {
         speedMultiplier = 1f;
