@@ -1,4 +1,4 @@
-using Unity.Netcode;
+﻿using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.UI;
@@ -43,12 +43,16 @@ public class NetworkFPSPlayer : NetworkBehaviour
     private float dashCooldownRemaining;
     private Vector3 dashDirection;
 
+    private MapManager mapManager;
+
     public bool IsAlive { get; private set; } = true;
 
     public override void OnNetworkSpawn()
     {
         characterController = GetComponent<CharacterController>();
         playerInput = GetComponent<PlayerInput>();
+
+        mapManager = MapManager.Instance;
 
         currentHealth.OnValueChanged += OnHealthChanged;
 
@@ -60,6 +64,7 @@ public class NetworkFPSPlayer : NetworkBehaviour
             return;
         }
 
+        // Input setup
         moveAction = playerInput.actions["Move"];
         jumpAction = playerInput.actions["Jump"];
         dashAction = playerInput.actions["Dash"];
@@ -77,6 +82,11 @@ public class NetworkFPSPlayer : NetworkBehaviour
 
         Cursor.lockState = CursorLockMode.Locked;
         Cursor.visible = false;
+
+        if (IsServer)
+        {
+            SetSpawnPosition();
+        }
     }
 
     public override void OnNetworkDespawn()
@@ -115,21 +125,17 @@ public class NetworkFPSPlayer : NetworkBehaviour
         if (move.magnitude > 1f)
             move.Normalize();
 
-        // Gravity
         if (characterController.isGrounded && verticalVelocity < 0f)
             verticalVelocity = -2f;
 
-        // Jump
         if (jumpAction.WasPressedThisFrame() && characterController.isGrounded && !isDashing)
         {
             verticalVelocity = Mathf.Sqrt(jumpHeight * -2f * gravity);
         }
 
-        // Dash cooldown
         if (dashCooldownRemaining > 0f)
             dashCooldownRemaining -= Time.deltaTime;
 
-        // Dash start
         if (dashAction.WasPressedThisFrame() && dashCooldownRemaining <= 0f && !isDashing)
         {
             isDashing = true;
@@ -184,8 +190,6 @@ public class NetworkFPSPlayer : NetworkBehaviour
 
         if (currentHealth.Value <= 0f)
         {
-            currentHealth.Value = 0f;
-            IsAlive = false;
             Die();
         }
     }
@@ -208,13 +212,25 @@ public class NetworkFPSPlayer : NetworkBehaviour
         currentHealth.Value = maxHealth;
         IsAlive = true;
 
-        transform.position = Vector3.zero;
-
         verticalVelocity = 0f;
         isDashing = false;
         dashTimeRemaining = 0f;
 
-        Cursor.visible = true;
-        Cursor.lockState = CursorLockMode.None;
+        SetSpawnPosition();
+    }
+
+    private void SetSpawnPosition()
+    {
+        if (mapManager == null)
+        {
+            Debug.LogError("MapManager not found!");
+            return;
+        }
+
+        Transform spawn = mapManager.GetActiveLaunchPoint();
+
+        characterController.enabled = false;
+        transform.SetPositionAndRotation(spawn.position, spawn.rotation);
+        characterController.enabled = true;
     }
 }
