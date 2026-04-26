@@ -8,7 +8,7 @@ public class LaserBeam : MonoBehaviour
     public int reflections;
     public float maxLength;
 
-    private LineRenderer lineRenderer;
+    [HideInInspector] public LineRenderer lineRenderer;
     private Ray ray;
     private RaycastHit hit;
     private Vector3 direction;
@@ -126,6 +126,13 @@ public class LaserBeam : MonoBehaviour
         }
 
         return false;
+    }
+
+
+    public void SetActive(bool active)
+    {
+        enabled = active;
+        lineRenderer.enabled = active;
     }
 }
 
