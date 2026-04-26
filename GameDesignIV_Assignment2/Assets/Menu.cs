@@ -30,7 +30,7 @@ public class Menu : MonoBehaviour
 
         networkManager.StartHost();
 
-        networkManager.SceneManager.LoadScene("NGO_FPS", LoadSceneMode.Single);
+        networkManager.SceneManager.LoadScene("TopDownCamScene", LoadSceneMode.Single);
     }
 
     public void JoinGame()

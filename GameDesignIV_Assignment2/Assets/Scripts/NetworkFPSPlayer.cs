@@ -1,7 +1,10 @@
 ﻿using Unity.Netcode;
+using Unity.Netcode.Transports.UTP; 
 using UnityEngine;
+using UnityEngine.SceneManagement;
 using UnityEngine.InputSystem;
 using UnityEngine.UI;
+using System.Collections; 
 
 [RequireComponent(typeof(CharacterController))]
 [RequireComponent(typeof(PlayerInput))]
@@ -85,7 +88,7 @@ public class NetworkFPSPlayer : NetworkBehaviour
 
         if (IsServer)
         {
-            SetSpawnPosition();
+            StartCoroutine(DelayedSpawn()); 
         }
     }
 
@@ -219,6 +222,23 @@ public class NetworkFPSPlayer : NetworkBehaviour
         SetSpawnPosition();
     }
 
+    private IEnumerator DelayedSpawn()
+    {
+        while (MapManager.Instance == null)
+        {
+            yield return null;
+        }
+
+        mapManager = MapManager.Instance;
+
+        while (!mapManager.CanSpawn())
+        {
+            yield return null;
+        }
+
+        SetSpawnPosition();
+    }
+
     private void SetSpawnPosition()
     {
         if (mapManager == null)
@@ -228,6 +248,12 @@ public class NetworkFPSPlayer : NetworkBehaviour
         }
 
         Transform spawn = mapManager.GetActiveLaunchPoint();
+
+        if (spawn == null)
+        {
+            Debug.LogError("Spawn point is null");
+            return;
+        }
 
         characterController.enabled = false;
         transform.SetPositionAndRotation(spawn.position, spawn.rotation);
