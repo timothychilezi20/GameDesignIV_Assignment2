@@ -1,30 +1,49 @@
-using UnityEngine;
+﻿using UnityEngine;
 using Unity.Netcode;
+using UnityEngine.InputSystem;
 
-
-[RequireComponent(typeof(Rigidbody))]
+[RequireComponent(typeof(CharacterController))]
+[RequireComponent(typeof(PlayerInput))]
 public class PlayerLauncher : NetworkBehaviour
 {
     [Header("Launch Settings")]
     public float minForce = 10f;
     public float maxForce = 40f;
     public float chargeSpeed = 20f;
+    public float gravity = -20f;
 
     private float currentForce;
     private bool isCharging;
+    private Vector3 velocity;
 
-    private Rigidbody rb;
+    private CharacterController controller;
+    private PlayerInput playerInput;
+    private InputAction launchAction;
 
     private void Awake()
     {
-        rb = GetComponent<Rigidbody>();
+        controller = GetComponent<CharacterController>();
+        playerInput = GetComponent<PlayerInput>(); 
     }
 
     public override void OnNetworkSpawn()
     {
-        if (IsOwner)
+        if (!IsOwner) return;
+
+        launchAction = playerInput.actions["Launch"];
+
+        launchAction.started += OnLaunchStarted;
+        launchAction.canceled += OnLaunchReleased;
+
+        launchAction.Enable();
+    }
+
+    public override void OnDestroy()
+    {
+        if (launchAction != null)
         {
-            StartChargingServerRpc();
+            launchAction.started -= OnLaunchStarted;
+            launchAction.canceled -= OnLaunchReleased;
         }
     }
 
@@ -36,31 +55,50 @@ public class PlayerLauncher : NetworkBehaviour
         {
             currentForce += chargeSpeed * Time.deltaTime;
             currentForce = Mathf.Clamp(currentForce, minForce, maxForce);
-
-            if (Input.GetKeyUp(KeyCode.Space))
-            {
-                ReleaseLaunchServerRpc(currentForce);
-                isCharging = false;
-            }
         }
+
+        ApplyMovement();
     }
 
-    [ServerRpc]
-    private void StartChargingServerRpc()
+    private void OnLaunchStarted(InputAction.CallbackContext context)
     {
-        currentForce = minForce;
         isCharging = true;
+        currentForce = minForce;
+    }
+
+    private void OnLaunchReleased(InputAction.CallbackContext context)
+    {
+        isCharging = false;
+
+        ReleaseLaunchServerRpc(currentForce);
+    }
+
+    private void ApplyMovement()
+    {
+        if (controller.isGrounded && velocity.y < 0)
+        {
+            velocity.y = -2f;
+        }
+
+        velocity.y += gravity * Time.deltaTime;
+
+        controller.Move(velocity * Time.deltaTime);
     }
 
     [ServerRpc]
     private void ReleaseLaunchServerRpc(float force)
     {
-        Launch(force);
+        LaunchClientRpc(force);
     }
 
-    private void Launch(float force)
+    [ClientRpc]
+    private void LaunchClientRpc(float force)
     {
-        rb.linearVelocity = Vector3.zero;
-        rb.AddForce(transform.forward * force, ForceMode.Impulse);
+        velocity = transform.forward * force;
+    }
+
+    public void ResetVelocity()
+    {
+        velocity = Vector3.zero;
     }
 }

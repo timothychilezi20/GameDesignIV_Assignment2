@@ -29,10 +29,10 @@ public class SpawnManager : NetworkBehaviour
 
         if (controller) controller.enabled = true;
 
-        var rb = player.GetComponent<Rigidbody>();
-        if (rb != null)
+        var launcher = player.GetComponent<PlayerLauncher>();
+        if (launcher != null)
         {
-            rb.linearVelocity = Vector3.zero;
+            launcher.ResetVelocity();
         }
     }
 }
