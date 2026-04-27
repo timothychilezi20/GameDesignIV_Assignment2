@@ -1,6 +1,5 @@
 ﻿using Unity.Netcode;
 using UnityEngine;
-using UnityEngine.SceneManagement;
 using UnityEngine.InputSystem;
 using UnityEngine.UI;
 using System.Collections;
@@ -66,11 +65,15 @@ public class NetworkFPSPlayer : NetworkBehaviour
 
     public override void OnNetworkSpawn()
     {
+        // ✅ FIX: Detach from NetworkManager to prevent migrating into DDOL
+        if (transform.parent != null)
+            transform.SetParent(null);
+
+        // ✅ FIX: Always assign these — ClientRpc runs on all clients, not just owner
         characterController = GetComponent<CharacterController>();
         playerInput = GetComponent<PlayerInput>();
 
         mapManager = MapManager.Instance;
-
         currentHealth.OnValueChanged += OnHealthChanged;
 
         if (!IsOwner)
@@ -78,9 +81,15 @@ public class NetworkFPSPlayer : NetworkBehaviour
             if (playerInput != null) playerInput.enabled = false;
             if (healthBarUI != null) healthBarUI.gameObject.SetActive(false);
             enabled = false;
+
+            // ✅ FIX: Server still needs to spawn non-host clients
+            if (IsServer)
+                StartCoroutine(DelayedSpawn());
+
             return;
         }
 
+        // Owner-only setup
         moveAction = playerInput.actions["Move"];
         jumpAction = playerInput.actions["Jump"];
         dashAction = playerInput.actions["Dash"];
@@ -94,9 +103,7 @@ public class NetworkFPSPlayer : NetworkBehaviour
         lookAction.Enable();
 
         if (PauseMenu.Instance != null)
-        {
             PauseMenu.Instance.Initialize(playerInput);
-        }
 
         if (healthBarUI != null)
         {
@@ -108,10 +115,9 @@ public class NetworkFPSPlayer : NetworkBehaviour
         Cursor.lockState = CursorLockMode.Locked;
         Cursor.visible = false;
 
+        // ✅ Server handles initial spawn for this player
         if (IsServer)
-        {
             StartCoroutine(DelayedSpawn());
-        }
     }
 
     private void Update()
@@ -148,7 +154,6 @@ public class NetworkFPSPlayer : NetworkBehaviour
 
         forward.y = 0f;
         right.y = 0f;
-
         forward.Normalize();
         right.Normalize();
 
@@ -157,17 +162,12 @@ public class NetworkFPSPlayer : NetworkBehaviour
         if (move.magnitude > 1f)
             move.Normalize();
 
-        // Grounding
         if (characterController.isGrounded && verticalVelocity < 0f)
             verticalVelocity = -2f;
 
-        // Jump
         if (jumpAction.WasPressedThisFrame() && characterController.isGrounded && !isDashing)
-        {
             verticalVelocity = Mathf.Sqrt(jumpHeight * -2f * gravity);
-        }
 
-        // Dash cooldown
         if (dashCooldownRemaining > 0f)
             dashCooldownRemaining -= Time.deltaTime;
 
@@ -187,7 +187,6 @@ public class NetworkFPSPlayer : NetworkBehaviour
         if (isDashing)
         {
             horizontalVelocity = dashDirection * dashSpeed;
-
             dashTimeRemaining -= Time.deltaTime;
             if (dashTimeRemaining <= 0f)
                 isDashing = false;
@@ -224,9 +223,7 @@ public class NetworkFPSPlayer : NetworkBehaviour
         currentHealth.Value = Mathf.Clamp(currentHealth.Value, 0f, maxHealth);
 
         if (currentHealth.Value <= 0f)
-        {
             Die();
-        }
     }
 
     public void AddHealth(float addedHealth)
@@ -256,16 +253,20 @@ public class NetworkFPSPlayer : NetworkBehaviour
 
     private IEnumerator DelayedSpawn()
     {
+        // Wait for MapManager to exist
         while (MapManager.Instance == null)
             yield return null;
 
         mapManager = MapManager.Instance;
 
+        // Wait until map is not transitioning
         while (!mapManager.CanSpawn())
             yield return null;
 
         SetSpawnPosition();
     }
+
+    // ---------------- SPAWN / TELEPORT ----------------
 
     private void SetSpawnPosition()
     {
@@ -276,16 +277,28 @@ public class NetworkFPSPlayer : NetworkBehaviour
         }
 
         Transform spawn = mapManager.GetActiveLaunchPoint();
-
         if (spawn == null)
         {
             Debug.LogError("Spawn point is null");
             return;
         }
 
+        TeleportClientRpc(spawn.position, spawn.rotation);
+    }
+
+    [ClientRpc]
+    private void TeleportClientRpc(Vector3 position, Quaternion rotation)
+    {
+        if (!IsOwner) return;
+
         characterController.enabled = false;
-        transform.SetPositionAndRotation(spawn.position, spawn.rotation);
+        transform.SetPositionAndRotation(position, rotation);
         characterController.enabled = true;
+    }
+
+    public void TeleportToSpawn()
+    {
+        SetSpawnPosition();
     }
 
     // ---------------- SPEED SYSTEM ----------------
@@ -311,7 +324,6 @@ public class NetworkFPSPlayer : NetworkBehaviour
     private void ApplyStunClientRpc(float stunDuration, float invincibleDuration)
     {
         if (!IsOwner) return;
-
         if (isInvincibleNet.Value) return;
 
         StartCoroutine(StunRoutine(stunDuration, invincibleDuration));

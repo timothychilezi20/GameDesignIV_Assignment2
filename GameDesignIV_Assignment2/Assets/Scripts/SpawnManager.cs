@@ -17,28 +17,21 @@ public class SpawnManager : NetworkBehaviour
             yield return null;
 
         Transform spawnPoint = mapManager.GetActiveLaunchPoint();
-
         var player = NetworkManager.Singleton.ConnectedClients[clientId].PlayerObject;
 
-        if (player == null)
-            yield break;
+        if (player == null) yield break;
 
-        var controller = player.GetComponent<CharacterController>();
-        if (controller) controller.enabled = false;
-
-        player.transform.SetPositionAndRotation(
-            spawnPoint.position,
-            spawnPoint.rotation
-        );
-
-        if (controller) controller.enabled = true;
+        // Use the RPC on the player, not direct transform manipulation
+        var networkPlayer = player.GetComponent<NetworkFPSPlayer>();
+        if (networkPlayer != null)
+        {
+            networkPlayer.TeleportToSpawn(); // calls the RPC internally
+        }
 
         var launcher = player.GetComponent<PlayerLauncher>();
         if (launcher != null)
         {
-            launcher.ResetVelocity(); // only movement reset
+            launcher.ResetVelocity();
         }
-
-        Debug.Log("[SERVER] Player respawned (no countdown)");
     }
 }
