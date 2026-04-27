@@ -1,8 +1,7 @@
-using TMPro;
+﻿using TMPro;
 using Unity.Netcode;
 using Unity.Netcode.Transports.UTP;
 using UnityEngine;
-using UnityEngine.SceneManagement;
 
 public class Menu : MonoBehaviour
 {
@@ -17,20 +16,23 @@ public class Menu : MonoBehaviour
     [SerializeField] private UnityTransport transport;
     [SerializeField] private NetworkManager networkManager;
 
+    [Header("Scene")]
+    [SerializeField] private string gameSceneName = "TopDownCamScene";
+
     private void Awake()
     {
-       if (ipInput) ipInput.text = defaultIP;
+        if (ipInput) ipInput.text = defaultIP;
         if (portInput) portInput.text = defaultPort.ToString();
     }
 
     public void StartHost()
     {
-        ushort port = GetPort(); 
+        ushort port = GetPort();
         transport.SetConnectionData("0.0.0.0", port);
 
         networkManager.StartHost();
 
-        networkManager.SceneManager.LoadScene("TopDownCamScene", LoadSceneMode.Single);
+        networkManager.SceneManager.LoadScene(gameSceneName, UnityEngine.SceneManagement.LoadSceneMode.Single);
     }
 
     public void JoinGame()
@@ -39,6 +41,7 @@ public class Menu : MonoBehaviour
         ushort port = GetPort();
 
         transport.SetConnectionData(ip, port);
+
         networkManager.StartClient();
     }
 
@@ -46,25 +49,23 @@ public class Menu : MonoBehaviour
     {
         ushort port = GetPort();
         transport.SetConnectionData("0.0.0.0", port);
+
         networkManager.StartServer();
     }
 
     private string GetIP()
     {
         if (!ipInput || string.IsNullOrWhiteSpace(ipInput.text))
-        {
             return defaultIP;
-        }
 
         return ipInput.text.Trim();
     }
 
     private ushort GetPort()
     {
-       if (!portInput || !ushort.TryParse(portInput.text, out ushort port))
-        {
+        if (!portInput || !ushort.TryParse(portInput.text, out ushort port))
             return defaultPort;
-        }
+
         return port;
     }
 }

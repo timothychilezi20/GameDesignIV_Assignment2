@@ -596,6 +596,10 @@ MonoBehaviour:
       m_Calls: []
     m_ActionId: d3f8be41-ebf1-469b-a2de-643cad103eff
     m_ActionName: 'FPS_Player/SwitchCamera[/Keyboard/tab,/DualShock4GamepadHID/rightStickPress]'
+  - m_PersistentCalls:
+      m_Calls: []
+    m_ActionId: 50b48763-1cae-40bd-a5ad-609e63812362
+    m_ActionName: 'FPS_Player/Pause[/Keyboard/escape]'
   m_NeverAutoSwitchControlSchemes: 0
   m_DefaultControlScheme: 
   m_DefaultActionMap: FPS_Player
@@ -688,7 +692,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::PlayerLauncher
   ShowTopMostFoldoutHeaderGroup: 1
   gravity: -20
-  launchForce: 60
+  launchForce: 100
   upwardBoost: 8
   launchDamping: 3
   countdownText: {fileID: 5941325769871483829}
@@ -930,6 +934,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::LaserBeam
   reflections: 3
   maxLength: 100
+  playerNumber: 1
   lineRenderer: {fileID: 0}
   damagePerSecond: 2
   points:
