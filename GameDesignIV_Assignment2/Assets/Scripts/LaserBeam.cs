@@ -7,6 +7,7 @@ public class LaserBeam : MonoBehaviour
 {
     public int reflections;
     public float maxLength;
+    public int playerNumber = 1;
 
     [HideInInspector] public LineRenderer lineRenderer;
     private Ray ray;
@@ -47,6 +48,13 @@ public class LaserBeam : MonoBehaviour
                 if (wall != null)
                 {
                     wall.TakeDamage(damagePerSecond * Time.deltaTime);
+                }
+
+                Target target = hit.collider.GetComponent<Target>();
+                if (target != null)
+                {
+                    target.GetHit(playerNumber);
+                    break; // laser stops on hit
                 }
 
 
@@ -121,7 +129,7 @@ public class LaserBeam : MonoBehaviour
             Vector2 intersection = p + t * r;
             hitPoint = new Vector3(intersection.x, a1.y, intersection.y);
             Debug.DrawLine(hitPoint, hitPoint);
-            Debug.Log("intersectingLines");
+          
             return true;
         }
 

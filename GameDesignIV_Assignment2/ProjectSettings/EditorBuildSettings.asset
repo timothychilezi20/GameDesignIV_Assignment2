@@ -20,6 +20,9 @@ EditorBuildSettings:
   - enabled: 0
     path: Assets/Scenes/stagiing.unity
     guid: 22911277fdd3b2843a4fc455f8e93889
+  - enabled: 1
+    path: Assets/Scenes/apayin.unity
+    guid: 3498ef9230717e145a5d8451b9c20d16
   m_configObjects:
     com.unity.input.settings.actions: {fileID: -944628639613478452, guid: 052faaac586de48259a63d0c4782560b, type: 3}
   m_UseUCBPForAssetBundles: 0
