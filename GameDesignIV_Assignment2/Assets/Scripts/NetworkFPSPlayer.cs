@@ -31,6 +31,12 @@ public class NetworkFPSPlayer : NetworkBehaviour
         NetworkVariableWritePermission.Server
     );
 
+    private NetworkVariable<bool> isInvincibleNet = new NetworkVariable<bool>(
+        false,
+        NetworkVariableReadPermission.Everyone,
+        NetworkVariableWritePermission.Server
+    );
+
     private PlayerInput playerInput;
     private CharacterController characterController;
 
@@ -38,7 +44,7 @@ public class NetworkFPSPlayer : NetworkBehaviour
     private InputAction jumpAction;
     private InputAction dashAction;
     private InputAction pauseAction;
-    private InputAction lookAction; 
+    private InputAction lookAction;
 
     private float verticalVelocity;
 
@@ -47,7 +53,14 @@ public class NetworkFPSPlayer : NetworkBehaviour
     private float dashCooldownRemaining;
     private Vector3 dashDirection;
 
+    private bool isStunned = false;
+    private float speedMultiplier = 1f;
+
     private MapManager mapManager;
+
+    [Header("Laser")]
+    [SerializeField] private Transform laserOrigin;
+    [SerializeField] private LineRenderer laserLineRenderer;
 
     public bool IsAlive { get; private set; } = true;
 
@@ -101,18 +114,6 @@ public class NetworkFPSPlayer : NetworkBehaviour
         }
     }
 
-    public override void OnNetworkDespawn()
-    {
-        currentHealth.OnValueChanged -= OnHealthChanged;
-
-        if (!IsOwner) return;
-
-        moveAction?.Disable();
-        jumpAction?.Disable();
-        dashAction?.Disable();
-        pauseAction?.Disable();
-    }
-
     private void Update()
     {
         if (!IsOwner || !IsSpawned) return;
@@ -124,15 +125,10 @@ public class NetworkFPSPlayer : NetworkBehaviour
                 PauseMenu.Instance.TogglePause();
 
                 if (PauseMenu.Instance.IsPaused)
-                {
                     lookAction.Disable();
-                }
                 else
-                {
                     lookAction.Enable();
-                }
             }
-                
         }
 
         if (PauseMenu.Instance != null && PauseMenu.Instance.IsPaused)
@@ -143,6 +139,8 @@ public class NetworkFPSPlayer : NetworkBehaviour
 
     private void HandleMovement()
     {
+        if (isStunned) return;
+
         Vector2 input = moveAction.ReadValue<Vector2>();
 
         Vector3 forward = transform.forward;
@@ -159,14 +157,17 @@ public class NetworkFPSPlayer : NetworkBehaviour
         if (move.magnitude > 1f)
             move.Normalize();
 
+        // Grounding
         if (characterController.isGrounded && verticalVelocity < 0f)
             verticalVelocity = -2f;
 
+        // Jump
         if (jumpAction.WasPressedThisFrame() && characterController.isGrounded && !isDashing)
         {
             verticalVelocity = Mathf.Sqrt(jumpHeight * -2f * gravity);
         }
 
+        // Dash cooldown
         if (dashCooldownRemaining > 0f)
             dashCooldownRemaining -= Time.deltaTime;
 
@@ -186,14 +187,14 @@ public class NetworkFPSPlayer : NetworkBehaviour
         if (isDashing)
         {
             horizontalVelocity = dashDirection * dashSpeed;
-            dashTimeRemaining -= Time.deltaTime;
 
+            dashTimeRemaining -= Time.deltaTime;
             if (dashTimeRemaining <= 0f)
                 isDashing = false;
         }
         else
         {
-            horizontalVelocity = move * moveSpeed;
+            horizontalVelocity = move * moveSpeed * speedMultiplier;
         }
 
         verticalVelocity += gravity * Time.deltaTime;
@@ -286,4 +287,58 @@ public class NetworkFPSPlayer : NetworkBehaviour
         transform.SetPositionAndRotation(spawn.position, spawn.rotation);
         characterController.enabled = true;
     }
+
+    // ---------------- SPEED SYSTEM ----------------
+
+    public void ApplySpeedMultiplier(float multiplier)
+    {
+        speedMultiplier = multiplier;
+    }
+
+    public void ResetSpeedMultiplier()
+    {
+        speedMultiplier = 1f;
+    }
+
+    // ---------------- STUN SYSTEM ----------------
+
+    public void ApplyStun(float stunDuration, float invincibleDuration)
+    {
+        ApplyStunClientRpc(stunDuration, invincibleDuration);
+    }
+
+    [ClientRpc]
+    private void ApplyStunClientRpc(float stunDuration, float invincibleDuration)
+    {
+        if (!IsOwner) return;
+
+        if (isInvincibleNet.Value) return;
+
+        StartCoroutine(StunRoutine(stunDuration, invincibleDuration));
+    }
+
+    private IEnumerator StunRoutine(float stunDuration, float invincibleDuration)
+    {
+        isStunned = true;
+        ApplySpeedMultiplier(0f);
+
+        isDashing = false;
+        dashTimeRemaining = 0f;
+
+        yield return new WaitForSeconds(stunDuration);
+
+        isStunned = false;
+        ResetSpeedMultiplier();
+
+        isInvincibleNet.Value = true;
+
+        yield return new WaitForSeconds(invincibleDuration);
+
+        isInvincibleNet.Value = false;
+    }
+
+    // ---------------- LASER ----------------
+
+    public LineRenderer GetLaserLineRenderer() => laserLineRenderer;
+    public Transform GetLaserOrigin() => laserOrigin;
 }

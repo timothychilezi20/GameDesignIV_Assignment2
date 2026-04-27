@@ -626,6 +626,8 @@ MonoBehaviour:
   dashCooldown: 1
   maxHealth: 100
   healthBarUI: {fileID: 7856177803750406271}
+  laserOrigin: {fileID: 3412245478439158576}
+  laserLineRenderer: {fileID: 7570141176627233729}
 --- !u!114 &318782231696013548
 MonoBehaviour:
   m_ObjectHideFlags: 0

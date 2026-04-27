@@ -8,42 +8,46 @@ public class LaserDisableTrap : NetworkBehaviour
     [SerializeField] private float flashStartTime = 2f;
     [SerializeField] private float flashSpeed = 8f;
 
-    private bool isActive = true;
+    private bool isTriggerLocked = false;
 
     private void OnTriggerEnter(Collider other)
     {
-        if (!IsServer || !isActive) return;
+        if (!IsServer || isTriggerLocked) return;
 
-        PlayerController player = other.GetComponent<PlayerController>();
+        PlayerController player = other.GetComponentInParent<PlayerController>();
         if (player == null) return;
 
-        // Disable the laser of the player who stepped on the trap
-        StartCoroutine(DisableLaser(player.playerNumber));
+        StartCoroutine(DisableLaserRoutine(player.playerNumber));
     }
 
-    private IEnumerator DisableLaser(int playerNumber)
+    private IEnumerator DisableLaserRoutine(int playerNumber)
     {
-        isActive = false;
+        isTriggerLocked = true;
 
-        LaserManager.Instance.SetLaserActive(playerNumber, false);
+        LaserManager laser = LaserManager.Instance;
+        if (laser == null) yield break;
 
-        yield return new WaitForSeconds(disableDuration - flashStartTime);
+        laser.SetLaserActive(playerNumber, false);
 
-        // Flash for last 2 seconds
-        StartCoroutine(FlashLaser(playerNumber));
-        yield return new WaitForSeconds(flashStartTime);
+        float safeDisableTime = Mathf.Max(0f, disableDuration - flashStartTime);
+        yield return new WaitForSeconds(safeDisableTime);
 
-        LaserManager.Instance.SetLaserActive(playerNumber, true);
-        isActive = true;
+        yield return StartCoroutine(FlashLaserRoutine(playerNumber, laser));
+
+        laser.SetLaserActive(playerNumber, true);
+
+        isTriggerLocked = false;
     }
 
-    private IEnumerator FlashLaser(int playerNumber)
+    private IEnumerator FlashLaserRoutine(int playerNumber, LaserManager laser)
     {
         float elapsed = 0f;
+        float interval = 1f / Mathf.Max(1f, flashSpeed);
+
         while (elapsed < flashStartTime)
         {
-            LaserManager.Instance.FlashLaserClientRpc(playerNumber);
-            float interval = 1f / flashSpeed;
+            laser.FlashLaserClientRpc(playerNumber);
+
             yield return new WaitForSeconds(interval);
             elapsed += interval;
         }
