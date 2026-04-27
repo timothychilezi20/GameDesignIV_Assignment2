@@ -1,7 +1,8 @@
 using UnityEngine;
 using System.Collections;
+using Unity.Netcode;
 
-public class LaserDisableTrap : MonoBehaviour
+public class LaserDisableTrap : NetworkBehaviour
 {
     [SerializeField] private float disableDuration = 5f;
     [SerializeField] private float flashStartTime = 2f;
@@ -11,42 +12,37 @@ public class LaserDisableTrap : MonoBehaviour
 
     private void OnTriggerEnter(Collider other)
     {
-        if (!isActive) return;
+        if (!IsServer || !isActive) return;
 
-        // The player that stepped on the trap
-        LaserBeam laser = other.GetComponentInChildren<LaserBeam>();
-        if (laser != null)
-        {
-            // Disable the OTHER players laser
-            LaserBeam targetLaser = laser.otherLaser;
-            if (targetLaser != null)
-                StartCoroutine(DisableLaser(targetLaser));
-        }
+        PlayerController player = other.GetComponent<PlayerController>();
+        if (player == null) return;
+
+        // Disable the laser of the player who stepped on the trap
+        StartCoroutine(DisableLaser(player.playerNumber));
     }
 
-    private IEnumerator DisableLaser(LaserBeam laser)
+    private IEnumerator DisableLaser(int playerNumber)
     {
         isActive = false;
-        laser.SetActive(false);
 
-        // Wait until flash period
+        LaserManager.Instance.SetLaserActive(playerNumber, false);
+
         yield return new WaitForSeconds(disableDuration - flashStartTime);
 
-        // Flash the laser for the last 2 seconds
-        StartCoroutine(FlashLaser(laser));
+        // Flash for last 2 seconds
+        StartCoroutine(FlashLaser(playerNumber));
         yield return new WaitForSeconds(flashStartTime);
 
-        // Re-enable
-        laser.SetActive(true);
+        LaserManager.Instance.SetLaserActive(playerNumber, true);
         isActive = true;
     }
 
-    private IEnumerator FlashLaser(LaserBeam laser)
+    private IEnumerator FlashLaser(int playerNumber)
     {
         float elapsed = 0f;
         while (elapsed < flashStartTime)
         {
-            laser.lineRenderer.enabled = !laser.lineRenderer.enabled;
+            LaserManager.Instance.FlashLaserClientRpc(playerNumber);
             float interval = 1f / flashSpeed;
             yield return new WaitForSeconds(interval);
             elapsed += interval;

@@ -44,7 +44,7 @@ public class LaserManager : NetworkBehaviour
     }
 
     public void RegisterPlayer(int playerNumber, Transform laserOrigin,
-        LineRenderer lineRenderer, PlayerController controller)
+     LineRenderer lineRenderer, PlayerController controller)
     {
         if (playerNumber == 1)
         {
@@ -61,33 +61,77 @@ public class LaserManager : NetworkBehaviour
 
         Debug.Log($"Player {playerNumber} registered. P1 ready: {laserOrigin1 != null} P2 ready: {laserOrigin2 != null}");
 
-        ulong networkId = controller.GetComponent<NetworkObject>().NetworkObjectId;
-        RegisterPlayerLineRendererClientRpc(playerNumber, networkId);
-        ApplyLaserMaterialClientRpc(playerNumber);
+        // Always send ALL currently registered players to ALL clients
+        // This ensures late-joining clients get players who registered before them
+        if (player1 != null)
+        {
+            RegisterPlayerLineRendererClientRpc(1);
+            ApplyLaserMaterialClientRpc(1);
+        }
+
+        if (player2 != null)
+        {
+            RegisterPlayerLineRendererClientRpc(2);
+            ApplyLaserMaterialClientRpc(2);
+        }
     }
 
     [ClientRpc]
-    private void RegisterPlayerLineRendererClientRpc(int playerNumber, ulong playerNetworkId)
+  
+    private void RegisterPlayerLineRendererClientRpc(int playerNumber)
     {
         if (IsServer) return;
+        StartCoroutine(WaitAndRegister(playerNumber));
+    }
 
-        if (NetworkManager.Singleton.SpawnManager.SpawnedObjects
-            .TryGetValue(playerNetworkId, out NetworkObject netObj))
+    private IEnumerator WaitAndRegister(int playerNumber)
+    {
+        yield return null;
+        yield return null;
+
+        PlayerController[] allPlayers = FindObjectsByType<PlayerController>(FindObjectsSortMode.None);
+
+        Debug.Log($"Client searching for Player {playerNumber}. Found {allPlayers.Length} PlayerControllers");
+
+        PlayerController target = null;
+        foreach (PlayerController pc in allPlayers)
         {
-            LineRenderer lr = netObj.GetComponent<PlayerController>().GetLaserLineRenderer();
+            Debug.Log($"Found PlayerController with playerNumber: {pc.playerNumber} IsOwner: {pc.IsOwner}");
+            if (pc.playerNumber == playerNumber)
+            {
+                target = pc;
+                break;
+            }
+        }
 
-            if (playerNumber == 1)
-                lineRenderer1 = lr;
-            else
-                lineRenderer2 = lr;
+        if (target == null)
+        {
+            Debug.LogError($"Client could not find PlayerController with playerNumber {playerNumber}");
+            yield break;
+        }
 
-            ApplyMaterialLocally(playerNumber, lr);
-            Debug.Log($"Client stored LineRenderer for Player {playerNumber}");
+        LineRenderer lr = target.GetLaserLineRenderer();
+
+        if (lr == null)
+        {
+            Debug.LogError($"PlayerController found for Player {playerNumber} but laserLineRenderer is null");
+            yield break;
+        }
+
+        // Store both the LineRenderer AND the laser origin on the client
+        if (playerNumber == 1)
+        {
+            lineRenderer1 = lr;
+            laserOrigin1 = target.GetLaserOrigin(); // client needs this to render locally
         }
         else
         {
-            Debug.LogError($"Client could not find NetworkObject {playerNetworkId} for Player {playerNumber}");
+            lineRenderer2 = lr;
+            laserOrigin2 = target.GetLaserOrigin(); // this is what LateUpdate checks
         }
+
+        ApplyMaterialLocally(playerNumber, lr);
+        Debug.Log($"Client successfully stored LineRenderer and Origin for Player {playerNumber}");
     }
 
     [ClientRpc]
@@ -113,7 +157,7 @@ public class LaserManager : NetworkBehaviour
     private void Update()
     {
         if (!IsServer) return;
-        if (!NetworkManager.Singleton.IsListening) return;
+        if (NetworkManager.Singleton == null || !NetworkManager.Singleton.IsListening) return;
 
         points1 = (laser1Active && laserOrigin1 != null)
             ? CalculateLaser(laserOrigin1, player1, player2)
@@ -123,54 +167,28 @@ public class LaserManager : NetworkBehaviour
             ? CalculateLaser(laserOrigin2, player2, player1)
             : new List<Vector3>();
 
+        // Cut both lasers at intersection and strip points beyond it
         if (points1.Count > 0 && points2.Count > 0)
             CutAtIntersection(points1, points2);
+
+        // After cutting, re-run hit detection only on the final points
+        if (laser1Active && laserOrigin1 != null)
+            CheckHitsOnFinalPath(points1, player1, player2, 1);
+
+        if (laser2Active && laserOrigin2 != null)
+            CheckHitsOnFinalPath(points2, player2, player1, 2);
 
         UpdateLaserClientRpc(points1.ToArray(), points2.ToArray());
     }
 
-    private void LateUpdate()
-    {
-        // Pure client renders their own laser locally to avoid server lag
-        if (!IsClient || IsHost) return;
-        if (laserOrigin2 != null && laser2Active)
-            RenderClientLaser();
-    }
 
-    private void RenderClientLaser()
-    {
-        if (laserOrigin2 == null || lineRenderer2 == null) return;
 
-        List<Vector3> localPoints = new List<Vector3>();
-        localPoints.Add(laserOrigin2.position);
 
-        Ray ray = new Ray(laserOrigin2.position, laserOrigin2.forward);
-        float remainingLength = maxLength;
 
-        for (int i = 0; i < reflections; i++)
-        {
-            if (Physics.Raycast(ray.origin, ray.direction, out RaycastHit hit, remainingLength))
-            {
-                localPoints.Add(hit.point);
-                remainingLength -= Vector3.Distance(ray.origin, hit.point);
-                ray = new Ray(hit.point - ray.direction * 0.02f,
-                    Vector3.Reflect(ray.direction, hit.normal));
-                if (hit.collider.tag != "Reflective")
-                    break;
-            }
-            else
-            {
-                localPoints.Add(ray.origin + ray.direction * remainingLength);
-                break;
-            }
-        }
 
-        lineRenderer2.positionCount = localPoints.Count;
-        lineRenderer2.SetPositions(localPoints.ToArray());
-    }
 
     private List<Vector3> CalculateLaser(Transform origin,
-        PlayerController ownerPlayer, PlayerController otherPlayer)
+    PlayerController ownerPlayer, PlayerController otherPlayer)
     {
         List<Vector3> points = new List<Vector3>();
         points.Add(origin.position);
@@ -185,27 +203,9 @@ public class LaserManager : NetworkBehaviour
                 points.Add(hit.point);
                 remainingLength -= Vector3.Distance(ray.origin, hit.point);
 
-                BreakableWall wall = hit.collider.GetComponent<BreakableWall>();
-                if (wall != null)
-                    wall.TakeDamage(damagePerSecond * Time.deltaTime);
-
-                Target target = hit.collider.GetComponent<Target>();
-                if (target != null)
-                {
-                    int playerNumber = origin == laserOrigin1 ? 1 : 2;
-                    target.GetHit(playerNumber);
-                    break;
-                }
-
-                PlayerController hitPlayer = hit.collider.GetComponent<PlayerController>();
-                if (hitPlayer != null && hitPlayer == otherPlayer && !hitPlayer.IsInvincible)
-                {
-                    hitPlayer.ApplyStun(stunDuration, invincibleDuration);
-                    break;
-                }
-
                 ray = new Ray(hit.point - ray.direction * 0.02f,
                     Vector3.Reflect(ray.direction, hit.normal));
+
                 if (hit.collider.tag != "Reflective")
                     break;
             }
@@ -218,6 +218,8 @@ public class LaserManager : NetworkBehaviour
 
         return points;
     }
+
+
 
     private void CutAtIntersection(List<Vector3> a, List<Vector3> b)
     {
@@ -240,11 +242,9 @@ public class LaserManager : NetworkBehaviour
             }
         }
     }
-
     [ClientRpc]
     private void UpdateLaserClientRpc(Vector3[] laser1Points, Vector3[] laser2Points)
     {
-        // Host renders both lasers from server data
         if (IsHost)
         {
             if (lineRenderer1 != null)
@@ -260,15 +260,63 @@ public class LaserManager : NetworkBehaviour
             return;
         }
 
-        // Pure client only renders Player 1's laser from server data
-        // Their own laser (Player 2) is handled locally in RenderClientLaser
+        // Client renders BOTH lasers from server data so intersection is always correct
         if (lineRenderer1 != null)
         {
             lineRenderer1.positionCount = laser1Points.Length;
             lineRenderer1.SetPositions(laser1Points);
         }
+
+        if (lineRenderer2 != null)
+        {
+            lineRenderer2.positionCount = laser2Points.Length;
+            lineRenderer2.SetPositions(laser2Points);
+        }
     }
 
+    private void CheckHitsOnFinalPath(List<Vector3> points,
+    PlayerController ownerPlayer, PlayerController otherPlayer, int playerNumber)
+    {
+        // Walk each segment of the final laser path
+        for (int i = 0; i < points.Count - 1; i++)
+        {
+            Vector3 segmentStart = points[i];
+            Vector3 segmentEnd = points[i + 1];
+            Vector3 direction = segmentEnd - segmentStart;
+            float segmentLength = direction.magnitude;
+
+            if (segmentLength < 0.001f) continue;
+
+            Ray ray = new Ray(segmentStart, direction.normalized);
+
+            if (Physics.Raycast(ray, out RaycastHit hit, segmentLength))
+            {
+                // Breakable wall
+                BreakableWall wall = hit.collider.GetComponent<BreakableWall>();
+                if (wall != null)
+                    wall.TakeDamage(damagePerSecond * Time.deltaTime);
+
+                // Target — only score if within the cut path
+                Target target = hit.collider.GetComponent<Target>();
+                if (target != null)
+                {
+                    target.GetHit(playerNumber);
+                    break;
+                }
+
+                // Stun other player
+                if (otherPlayer != null)
+                {
+                    PlayerController hitPlayer = hit.collider.GetComponent<PlayerController>();
+                    if (hitPlayer != null && hitPlayer == otherPlayer && !hitPlayer.IsInvincible)
+                    {
+                        hitPlayer.ApplyStun(stunDuration, invincibleDuration);
+                        break;
+                    }
+                }
+            }
+        }
+    }
     public void SetLaserActive(int playerNumber, bool active)
     {
         if (!IsServer) return;
