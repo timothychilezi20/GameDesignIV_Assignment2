@@ -1,4 +1,5 @@
 using UnityEngine;
+using System.Collections;
 using Unity.Netcode;
 
 public class PlayerSpawnManager : NetworkBehaviour
@@ -8,27 +9,45 @@ public class PlayerSpawnManager : NetworkBehaviour
     public override void OnNetworkSpawn()
     {
         if (!IsServer) return;
-
         NetworkManager.Singleton.OnClientConnectedCallback += OnClientConnected;
     }
 
     public override void OnNetworkDespawn()
     {
         if (!IsServer) return;
-
         NetworkManager.Singleton.OnClientConnectedCallback -= OnClientConnected;
     }
 
     private void OnClientConnected(ulong clientId)
     {
-        // Get the player object for this client
-        if (NetworkManager.Singleton.ConnectedClients.TryGetValue(clientId, out NetworkClient client))
-        {
-            int spawnIndex = NetworkManager.Singleton.ConnectedClients.Count - 1;
-            spawnIndex = Mathf.Clamp(spawnIndex, 0, spawnPoints.Length - 1);
+        StartCoroutine(SpawnAfterDelay(clientId));
+    }
 
-            client.PlayerObject.transform.position = spawnPoints[spawnIndex].position;
-            client.PlayerObject.transform.rotation = spawnPoints[spawnIndex].rotation;
+    private IEnumerator SpawnAfterDelay(ulong clientId)
+    {
+        yield return null;
+        yield return null;
+
+        if (!NetworkManager.Singleton.ConnectedClients.TryGetValue(clientId, out NetworkClient client))
+        {
+            Debug.LogError($"Could not find client {clientId}");
+            yield break;
         }
+
+        if (client.PlayerObject == null)
+        {
+            Debug.LogError($"Player object is null for client {clientId}");
+            yield break;
+        }
+
+        int spawnIndex = Mathf.Clamp(
+            NetworkManager.Singleton.ConnectedClients.Count - 1,
+            0,
+            spawnPoints.Length - 1);
+
+        client.PlayerObject.transform.position = spawnPoints[spawnIndex].position;
+        client.PlayerObject.transform.rotation = spawnPoints[spawnIndex].rotation;
+
+        Debug.Log($"Spawned client {clientId} at spawn point {spawnIndex}");
     }
 }

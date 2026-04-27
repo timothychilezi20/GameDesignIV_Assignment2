@@ -1,4 +1,4 @@
-using System.Collections;
+ï»¿using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.InputSystem;
@@ -21,9 +21,9 @@ public class PlayerController : NetworkBehaviour
     private Vector2 lookInput;
 
     private bool isStunned = false;
-    private bool isInvincible = false;
+
     private NetworkVariable<bool> isInvincibleNet = new NetworkVariable<bool>(
-      false, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Owner);
+        false, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Owner);
 
     public bool IsInvincible => isInvincibleNet.Value;
 
@@ -33,7 +33,6 @@ public class PlayerController : NetworkBehaviour
     void Awake()
     {
         rb = GetComponent<Rigidbody>();
-
         rb.freezeRotation = true;
         rb.constraints = RigidbodyConstraints.FreezePositionY
                        | RigidbodyConstraints.FreezeRotationX
@@ -43,22 +42,21 @@ public class PlayerController : NetworkBehaviour
     public override void OnNetworkSpawn()
     {
         playerNumber = OwnerClientId == 0 ? 1 : 2;
-
+        Debug.Log($"OnNetworkSpawn â€” OwnerClientId: {OwnerClientId} playerNumber: {playerNumber} IsOwner: {IsOwner}");
         if (IsOwner)
         {
             cam = Camera.main;
 
             if (cam == null)
-                Debug.LogError("Camera.main is null");
-
-            // Wait a frame before registering so NetworkManager is fully ready
-            StartCoroutine(RegisterAfterDelay());
+                Debug.LogError("Camera.main is null â€” ensure camera is tagged MainCamera");
 
             Cursor.visible = false;
             Cursor.lockState = CursorLockMode.Confined;
-        }
 
-        if (!IsOwner)
+            // Delay registration by one frame so NetworkManager is fully ready
+            StartCoroutine(RegisterAfterDelay());
+        }
+        else
         {
             PlayerInput input = GetComponent<PlayerInput>();
             if (input != null)
@@ -66,10 +64,17 @@ public class PlayerController : NetworkBehaviour
         }
     }
 
-
     private IEnumerator RegisterAfterDelay()
     {
-        yield return null; // wait one frame
+        yield return null;
+        yield return null; // two frames to be safe
+
+        if (LaserManager.Instance == null)
+        {
+            Debug.LogError("LaserManager Instance is null");
+            yield break;
+        }
+
         RegisterWithLaserManagerServerRpc(playerNumber);
     }
 
@@ -81,20 +86,19 @@ public class PlayerController : NetworkBehaviour
             Debug.LogError("LaserManager Instance is null on server");
             return;
         }
-
         LaserManager.Instance.RegisterPlayer(pNumber, laserOrigin, laserLineRenderer, this);
     }
 
     void Update()
     {
-        // Only the owning client rotates toward their own mouse
+        Debug.Log($"PlayerController Update â€” IsOwner: {IsOwner} playerNumber: {playerNumber} OwnerClientId: {OwnerClientId}");
+       
         if (!IsOwner) return;
         FaceMouseCursor();
     }
 
     void FixedUpdate()
     {
-        // Only the owning client moves their own player
         if (!IsOwner) return;
 
         rb.linearVelocity = new Vector3(
@@ -104,8 +108,6 @@ public class PlayerController : NetworkBehaviour
         );
     }
 
-    // Input callbacks — only fire on the owning client
-    // because PlayerInput is disabled on non-owners above
     void OnMove(InputValue value)
     {
         if (!IsOwner) return;
@@ -147,21 +149,11 @@ public class PlayerController : NetworkBehaviour
         }
     }
 
-    // Trap functions — called by server via LaserManager and trap scripts
-    public void ApplySpeedMultiplier(float multiplier)
-    {
-        speedMultiplier = multiplier;
-    }
-
-    public void ResetSpeedMultiplier()
-    {
-        speedMultiplier = 1f;
-    }
+    public void ApplySpeedMultiplier(float multiplier) => speedMultiplier = multiplier;
+    public void ResetSpeedMultiplier() => speedMultiplier = 1f;
 
     public void ApplyStun(float stunDuration, float invincibleDuration)
     {
-        // Don't check local bools here — they're only accurate on the owning client
-        // The ClientRpc guard handles double-stun prevention
         ApplyStunClientRpc(stunDuration, invincibleDuration);
     }
 
@@ -169,7 +161,6 @@ public class PlayerController : NetworkBehaviour
     private void ApplyStunClientRpc(float stunDuration, float invincibleDuration)
     {
         if (!IsOwner) return;
-        // Guard runs here where the bools are actually accurate
         if (isStunned || isInvincibleNet.Value) return;
         StartCoroutine(StunRoutine(stunDuration, invincibleDuration));
     }
@@ -181,24 +172,14 @@ public class PlayerController : NetworkBehaviour
         yield return new WaitForSeconds(stunDuration);
 
         isStunned = false;
-        isInvincibleNet.Value = true; // synced to server so laser checks work
+        isInvincibleNet.Value = true;
         ResetSpeedMultiplier();
         yield return new WaitForSeconds(invincibleDuration);
 
         isInvincibleNet.Value = false;
     }
 
-    public LineRenderer GetLaserLineRenderer()
-    {
-        return laserLineRenderer;
-    }
-
-    public Transform GetLaserOrigin()
-    {
-        return laserOrigin;
-    }
-    //[ServerRpc]
-
+    public LineRenderer GetLaserLineRenderer() => laserLineRenderer;
+    public Transform GetLaserOrigin() => laserOrigin;
 }
-
 

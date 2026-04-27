@@ -275,7 +275,7 @@ public class NetworkFPSPlayer : NetworkBehaviour
             return;
         }
 
-        Transform spawn = mapManager.GetActiveLaunchPoint();
+        Transform spawn = mapManager.GetSpawnPoint();
 
         if (spawn == null)
         {

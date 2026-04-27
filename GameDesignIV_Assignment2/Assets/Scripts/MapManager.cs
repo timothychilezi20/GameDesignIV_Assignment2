@@ -1,38 +1,27 @@
-﻿using UnityEngine;
+﻿using System.Collections.Generic;
+using UnityEngine;
 using Unity.Netcode;
 
 /// <summary>
-/// MapManager — Server-authoritative map switcher with a clean 3-state cycle.
+/// MapManager — Server-authoritative map switcher with spawn point management.
 ///
-/// STATE MACHINE (server-driven):
+/// STATE MACHINE:
+///   FLAT      — Maps rest at 0°. Spawning allowed. After flatHoldDuration, decides swap or tilt.
+///   SWITCHING — Maps slide. Spawning BLOCKED. Players stay parented to active map transform.
+///   TILTING   — Active map tilts and returns. Spawning allowed.
 ///
-///   FLAT
-///     • Both maps are at rest (0° tilt).
-///     • After flatHoldDuration seconds the machine decides: swap or tilt?
-///     • A swap is triggered every [flatPhasesBeforeSwap] flat phases.
-///     • Otherwise, a TILTING phase runs first.
-///
-///   SWITCHING
-///     • Can only be entered from FLAT.
-///     • Active map slides down; new active map slides up. Both stay at 0° tilt.
-///     • Returns to FLAT once both maps reach their destination.
-///
-///   TILTING
-///     • Can only be entered from FLAT (swap not yet due).
-///     • Active map tilts to a random angle in [minTiltAngle, maxTiltAngle] on the
-///       POSITIVE X axis, holds for tiltHoldDuration, then returns to 0°.
-///     • Inactive map mirrors the tilt for visual cohesion.
-///     • Returns to FLAT once tilt is back to 0°.
-///
-/// Networking:
-///     • NetworkVariables replicate all driving state to every client.
-///     • Server runs the state machine; clients read and apply visuals each frame.
+/// SPAWNING:
+///   • Each map has an array of spawn points assigned in the Inspector.
+///   • GetSpawnPoint() returns the next spawn point on the ACTIVE map (round-robin).
+///   • CanSpawn() returns false during SWITCHING — callers must respect this.
+///   • Players are kept on the active map during transitions by re-parenting them
+///     to the active map's Transform on the server when a switch begins.
 /// </summary>
 public class MapManager : NetworkBehaviour
 {
-    // -------------------------------------------------------------------------
+    // =========================================================================
     // Inspector
-    // -------------------------------------------------------------------------
+    // =========================================================================
 
     [Header("Map Transforms")]
     public Transform map1;
@@ -69,9 +58,16 @@ public class MapManager : NetworkBehaviour
     [Tooltip("How long (seconds) the map holds at peak tilt before returning to flat.")]
     public float tiltHoldDuration = 3f;
 
-    // -------------------------------------------------------------------------
+    [Header("Spawn Points")]
+    [Tooltip("Spawn points on Map 1. Assign as children of the map1 Transform.")]
+    [SerializeField] private Transform[] map1SpawnPoints;
+
+    [Tooltip("Spawn points on Map 2. Assign as children of the map2 Transform.")]
+    [SerializeField] private Transform[] map2SpawnPoints;
+
+    // =========================================================================
     // Network state  (server writes → all clients read)
-    // -------------------------------------------------------------------------
+    // =========================================================================
 
     private enum MapState : byte { Flat, Switching, Tilting }
 
@@ -92,18 +88,38 @@ public class MapManager : NetworkBehaviour
         NetworkVariableReadPermission.Everyone,
         NetworkVariableWritePermission.Server);
 
-    // -------------------------------------------------------------------------
+    // =========================================================================
     // Server-only state
-    // -------------------------------------------------------------------------
+    // =========================================================================
 
-    private float stateTimer;       // general timer for the current state
-    private float targetTilt;       // tilt angle chosen when entering TILTING
-    private int flatPhaseCount;   // flat phases completed since last swap
-    private bool tiltingIn;        // true = moving toward targetTilt, false = holding/returning
+    private float stateTimer;
+    private float targetTilt;
+    private int flatPhaseCount;
+    private bool tiltingIn;
+    private int spawnIndex;          // round-robin index across active map's spawn points
 
-    // -------------------------------------------------------------------------
+    // Tracks which players are currently parented to which map (server only)
+    private List<Transform> trackedPlayers = new List<Transform>();
+
+    // =========================================================================
+    // Singleton access (optional — lets other scripts call MapManager.Instance)
+    // =========================================================================
+
+    public static MapManager Instance { get; private set; }
+
+    private void Awake()
+    {
+        if (Instance != null && Instance != this)
+        {
+            Destroy(gameObject);
+            return;
+        }
+        Instance = this;
+    }
+
+    // =========================================================================
     // Unity / NGO lifecycle
-    // -------------------------------------------------------------------------
+    // =========================================================================
 
     public override void OnNetworkSpawn()
     {
@@ -112,6 +128,7 @@ public class MapManager : NetworkBehaviour
         if (IsServer)
         {
             flatPhaseCount = 0;
+            spawnIndex = 0;
             EnterFlat();
         }
     }
@@ -121,13 +138,12 @@ public class MapManager : NetworkBehaviour
         if (IsServer)
             ServerTick();
 
-        // All clients (including host) apply visuals every frame
         ApplyVisuals();
     }
 
-    // -------------------------------------------------------------------------
-    // Server tick — drives the state machine
-    // -------------------------------------------------------------------------
+    // =========================================================================
+    // Server tick
+    // =========================================================================
 
     private void ServerTick()
     {
@@ -155,7 +171,6 @@ public class MapManager : NetworkBehaviour
         stateTimer += Time.deltaTime;
         if (stateTimer < flatHoldDuration) return;
 
-        // Flat hold complete — decide what comes next
         flatPhaseCount++;
 
         if (flatPhaseCount >= flatPhasesBeforeSwap)
@@ -175,7 +190,18 @@ public class MapManager : NetworkBehaviour
 
     private void EnterSwitching()
     {
-        // Flip active map immediately; ApplyVisuals will start sliding them
+        // Parent all tracked players to the INCOMING active map so they
+        // ride up with it and don't fall with the outgoing map.
+        bool incomingMap1Active = !netMap1Active.Value; // what it's about to become
+        Transform incomingMap = incomingMap1Active ? map1 : map2;
+
+        foreach (Transform player in trackedPlayers)
+        {
+            if (player != null)
+                player.SetParent(incomingMap, worldPositionStays: true);
+        }
+
+        // Flip the active flag — ApplyVisuals will begin sliding both maps
         netMap1Active.Value = !netMap1Active.Value;
         netState.Value = MapState.Switching;
         stateTimer = 0f;
@@ -183,16 +209,24 @@ public class MapManager : NetworkBehaviour
 
     private void TickSwitching()
     {
-        // Wait until both maps have arrived at their new positions
         bool active = netMap1Active.Value;
         Vector3 t1 = active ? map1UpPos : map1DownPos;
         Vector3 t2 = active ? map2DownPos : map2UpPos;
 
-        bool map1Arrived = Vector3.Distance(map1.position, t1) < 0.01f;
-        bool map2Arrived = Vector3.Distance(map2.position, t2) < 0.01f;
+        bool map1Done = Vector3.Distance(map1.position, t1) < 0.01f;
+        bool map2Done = Vector3.Distance(map2.position, t2) < 0.01f;
 
-        if (map1Arrived && map2Arrived)
+        if (map1Done && map2Done)
+        {
+            // Unparent players — they now stand freely on the new active map
+            foreach (Transform player in trackedPlayers)
+            {
+                if (player != null)
+                    player.SetParent(null, worldPositionStays: true);
+            }
+
             EnterFlat();
+        }
     }
 
     // =========================================================================
@@ -213,26 +247,25 @@ public class MapManager : NetworkBehaviour
 
         if (tiltingIn)
         {
-            // --- Phase 1: tilt toward target ---
             current = Mathf.MoveTowards(current, targetTilt, tiltSpeed * Time.deltaTime);
             netTilt.Value = current;
 
             if (Mathf.Approximately(current, targetTilt))
             {
-                tiltingIn = false;   // switch to hold + return phase
+                tiltingIn = false;
                 stateTimer = 0f;
             }
         }
         else
         {
-            // --- Phase 2: hold at peak ---
+            // Hold at peak
             if (stateTimer < tiltHoldDuration)
             {
                 stateTimer += Time.deltaTime;
                 return;
             }
 
-            // --- Phase 3: return to flat ---
+            // Return to flat
             current = Mathf.MoveTowards(current, 0f, tiltSpeed * Time.deltaTime);
             netTilt.Value = current;
 
@@ -245,7 +278,7 @@ public class MapManager : NetworkBehaviour
     }
 
     // =========================================================================
-    // Visual application — runs on ALL clients every frame
+    // Visual application — ALL clients
     // =========================================================================
 
     private void ApplyVisuals()
@@ -253,18 +286,68 @@ public class MapManager : NetworkBehaviour
         bool active = netMap1Active.Value;
         float tilt = netTilt.Value;
 
-        // --- Slide positions ---
         Vector3 target1 = active ? map1UpPos : map1DownPos;
         Vector3 target2 = active ? map2DownPos : map2UpPos;
 
         map1.position = Vector3.MoveTowards(map1.position, target1, moveSpeed * Time.deltaTime);
         map2.position = Vector3.MoveTowards(map2.position, target2, moveSpeed * Time.deltaTime);
 
-        // --- Tilt rotation (positive X axis) ---
-        // Both maps share the same tilt value so the inactive map mirrors the active one,
-        // preventing it from visually clashing or tilting into the active map.
         Quaternion tiltRot = Quaternion.Euler(tilt, 0f, 0f);
         map1.localRotation = tiltRot;
         map2.localRotation = tiltRot;
+    }
+
+    // =========================================================================
+    // PUBLIC SPAWN API  (call from your spawner / game manager on the SERVER)
+    // =========================================================================
+
+    /// <summary>
+    /// Returns false during a SWITCHING phase. Always check before spawning.
+    /// </summary>
+    public bool CanSpawn()
+    {
+        return netState.Value != MapState.Switching;
+    }
+
+    /// <summary>
+    /// Returns the next spawn point on the currently active map (round-robin).
+    /// Returns null if no spawn points are assigned.
+    /// Call only after CanSpawn() == true.
+    /// </summary>
+    public Transform GetSpawnPoint()
+    {
+        Transform[] points = netMap1Active.Value ? map1SpawnPoints : map2SpawnPoints;
+
+        if (points == null || points.Length == 0)
+        {
+            Debug.LogError($"[MapManager] No spawn points assigned for the active map " +
+                           $"(map{(netMap1Active.Value ? "1" : "2")}).");
+            return null;
+        }
+
+        Transform chosen = points[spawnIndex % points.Length];
+        spawnIndex = (spawnIndex + 1) % points.Length;
+        return chosen;
+    }
+
+    /// <summary>
+    /// Register a player Transform so MapManager can re-parent it during map switches.
+    /// Call this on the server after the player spawns (e.g. from your spawner script).
+    /// </summary>
+    public void RegisterPlayer(Transform playerTransform)
+    {
+        if (!IsServer) return;
+
+        if (!trackedPlayers.Contains(playerTransform))
+            trackedPlayers.Add(playerTransform);
+    }
+
+    /// <summary>
+    /// Unregister a player (call on disconnect / death).
+    /// </summary>
+    public void UnregisterPlayer(Transform playerTransform)
+    {
+        if (!IsServer) return;
+        trackedPlayers.Remove(playerTransform);
     }
 }
