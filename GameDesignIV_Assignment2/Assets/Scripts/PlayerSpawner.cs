@@ -4,12 +4,17 @@ using Unity.Netcode;
 
 public class PlayerSpawnManager : NetworkBehaviour
 {
-    [SerializeField] private Transform[] spawnPoints;
+    [SerializeField] private Transform spawnPoint1;
+    [SerializeField] private Transform spawnPoint2;
 
     public override void OnNetworkSpawn()
     {
         if (!IsServer) return;
+
         NetworkManager.Singleton.OnClientConnectedCallback += OnClientConnected;
+
+        // Handle host immediately
+        OnClientConnected(NetworkManager.Singleton.LocalClientId);
     }
 
     public override void OnNetworkDespawn()
@@ -25,29 +30,59 @@ public class PlayerSpawnManager : NetworkBehaviour
 
     private IEnumerator SpawnAfterDelay(ulong clientId)
     {
-        yield return null;
-        yield return null;
+        // Wait until player object exists
+        NetworkClient client = null;
+        float timeout = 5f;
+        float elapsed = 0f;
 
-        if (!NetworkManager.Singleton.ConnectedClients.TryGetValue(clientId, out NetworkClient client))
+        while (elapsed < timeout)
         {
-            Debug.LogError($"Could not find client {clientId}");
+            if (NetworkManager.Singleton.ConnectedClients.TryGetValue(clientId, out client)
+                && client.PlayerObject != null)
+                break;
+
+            elapsed += Time.deltaTime;
+            yield return null;
+        }
+
+        if (client == null || client.PlayerObject == null)
+        {
+            Debug.LogError($"Timed out waiting for player object for client {clientId}");
             yield break;
         }
 
-        if (client.PlayerObject == null)
+        // Determine which spawn point to use
+        Transform spawnPoint = clientId == 0 ? spawnPoint1 : spawnPoint2;
+
+        if (spawnPoint == null)
         {
-            Debug.LogError($"Player object is null for client {clientId}");
+            Debug.LogError($"Spawn point is null for client {clientId}");
             yield break;
         }
 
-        int spawnIndex = Mathf.Clamp(
-            NetworkManager.Singleton.ConnectedClients.Count - 1,
-            0,
-            spawnPoints.Length - 1);
+        Debug.Log($"Spawning client {clientId} at {spawnPoint.position}");
 
-        client.PlayerObject.transform.position = spawnPoints[spawnIndex].position;
-        client.PlayerObject.transform.rotation = spawnPoints[spawnIndex].rotation;
+        // Tell the owning client to set their own position
+        TeleportPlayerClientRpc(clientId, spawnPoint.position, spawnPoint.rotation);
+    }
 
-        Debug.Log($"Spawned client {clientId} at spawn point {spawnIndex}");
+    [ClientRpc]
+    private void TeleportPlayerClientRpc(ulong clientId, Vector3 position, Quaternion rotation)
+    {
+        if (NetworkManager.Singleton.LocalClientId != clientId) return;
+
+        PlayerController[] players = FindObjectsByType<PlayerController>(FindObjectsSortMode.None);
+        foreach (PlayerController player in players)
+        {
+            if (player.OwnerClientId == clientId)
+            {
+                player.transform.position = position;
+                player.transform.rotation = rotation;
+                Debug.Log($"Client {clientId} placed at {position}");
+                return;
+            }
+        }
+
+        Debug.LogError($"Could not find PlayerController for client {clientId}");
     }
 }
