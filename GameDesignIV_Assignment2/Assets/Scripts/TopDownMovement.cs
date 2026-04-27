@@ -22,7 +22,10 @@ public class PlayerController : NetworkBehaviour
 
     private bool isStunned = false;
     private bool isInvincible = false;
-    public bool IsInvincible => isInvincible;
+    private NetworkVariable<bool> isInvincibleNet = new NetworkVariable<bool>(
+      false, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Owner);
+
+    public bool IsInvincible => isInvincibleNet.Value;
 
     private float speedMultiplier = 1f;
     public int playerNumber;
@@ -157,7 +160,17 @@ public class PlayerController : NetworkBehaviour
 
     public void ApplyStun(float stunDuration, float invincibleDuration)
     {
-        if (isInvincible || isStunned) return;
+        // Don't check local bools here — they're only accurate on the owning client
+        // The ClientRpc guard handles double-stun prevention
+        ApplyStunClientRpc(stunDuration, invincibleDuration);
+    }
+
+    [ClientRpc]
+    private void ApplyStunClientRpc(float stunDuration, float invincibleDuration)
+    {
+        if (!IsOwner) return;
+        // Guard runs here where the bools are actually accurate
+        if (isStunned || isInvincibleNet.Value) return;
         StartCoroutine(StunRoutine(stunDuration, invincibleDuration));
     }
 
@@ -168,16 +181,21 @@ public class PlayerController : NetworkBehaviour
         yield return new WaitForSeconds(stunDuration);
 
         isStunned = false;
-        isInvincible = true;
+        isInvincibleNet.Value = true; // synced to server so laser checks work
         ResetSpeedMultiplier();
         yield return new WaitForSeconds(invincibleDuration);
 
-        isInvincible = false;
+        isInvincibleNet.Value = false;
     }
 
     public LineRenderer GetLaserLineRenderer()
     {
         return laserLineRenderer;
+    }
+
+    public Transform GetLaserOrigin()
+    {
+        return laserOrigin;
     }
     //[ServerRpc]
 
