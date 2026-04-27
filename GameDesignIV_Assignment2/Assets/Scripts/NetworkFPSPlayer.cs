@@ -1,10 +1,9 @@
 ﻿using Unity.Netcode;
-using Unity.Netcode.Transports.UTP; 
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using UnityEngine.InputSystem;
 using UnityEngine.UI;
-using System.Collections; 
+using System.Collections;
 
 [RequireComponent(typeof(CharacterController))]
 [RequireComponent(typeof(PlayerInput))]
@@ -38,6 +37,8 @@ public class NetworkFPSPlayer : NetworkBehaviour
     private InputAction moveAction;
     private InputAction jumpAction;
     private InputAction dashAction;
+    private InputAction pauseAction;
+    private InputAction lookAction; 
 
     private float verticalVelocity;
 
@@ -67,14 +68,22 @@ public class NetworkFPSPlayer : NetworkBehaviour
             return;
         }
 
-        // Input setup
         moveAction = playerInput.actions["Move"];
         jumpAction = playerInput.actions["Jump"];
         dashAction = playerInput.actions["Dash"];
+        pauseAction = playerInput.actions["Pause"];
+        lookAction = playerInput.actions["Look"];
 
         moveAction.Enable();
         jumpAction.Enable();
         dashAction.Enable();
+        pauseAction.Enable();
+        lookAction.Enable();
+
+        if (PauseMenu.Instance != null)
+        {
+            PauseMenu.Instance.Initialize(playerInput);
+        }
 
         if (healthBarUI != null)
         {
@@ -88,7 +97,7 @@ public class NetworkFPSPlayer : NetworkBehaviour
 
         if (IsServer)
         {
-            StartCoroutine(DelayedSpawn()); 
+            StartCoroutine(DelayedSpawn());
         }
     }
 
@@ -101,11 +110,33 @@ public class NetworkFPSPlayer : NetworkBehaviour
         moveAction?.Disable();
         jumpAction?.Disable();
         dashAction?.Disable();
+        pauseAction?.Disable();
     }
 
     private void Update()
     {
         if (!IsOwner || !IsSpawned) return;
+
+        if (pauseAction != null && pauseAction.WasPressedThisFrame())
+        {
+            if (PauseMenu.Instance != null)
+            {
+                PauseMenu.Instance.TogglePause();
+
+                if (PauseMenu.Instance.IsPaused)
+                {
+                    lookAction.Disable();
+                }
+                else
+                {
+                    lookAction.Enable();
+                }
+            }
+                
+        }
+
+        if (PauseMenu.Instance != null && PauseMenu.Instance.IsPaused)
+            return;
 
         HandleMovement();
     }
@@ -225,16 +256,12 @@ public class NetworkFPSPlayer : NetworkBehaviour
     private IEnumerator DelayedSpawn()
     {
         while (MapManager.Instance == null)
-        {
             yield return null;
-        }
 
         mapManager = MapManager.Instance;
 
         while (!mapManager.CanSpawn())
-        {
             yield return null;
-        }
 
         SetSpawnPosition();
     }

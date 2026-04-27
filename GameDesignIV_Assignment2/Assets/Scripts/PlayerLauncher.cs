@@ -22,6 +22,9 @@ public class PlayerLauncher : NetworkBehaviour
     private PlayerInput playerInput;
 
     private InputAction launchAction;
+    private InputAction pauseAction;
+
+    private PauseMenu pauseMenu;
 
     [SerializeField] private TMP_Text countdownText;
 
@@ -47,6 +50,12 @@ public class PlayerLauncher : NetworkBehaviour
 
         if (countdownText != null)
             countdownText.gameObject.SetActive(false);
+
+        pauseAction = playerInput.actions["Pause"];
+        pauseAction.Enable();
+        pauseAction.performed += OnPausePressed; 
+
+        pauseMenu = FindAnyObjectByType<PauseMenu>();
     }
 
     public override void OnNetworkDespawn()
@@ -56,6 +65,22 @@ public class PlayerLauncher : NetworkBehaviour
             launchAction.performed -= OnLaunchPressed;
             launchAction.Disable();
         }
+
+        if (pauseAction != null)
+        {
+            pauseAction.performed -= OnPausePressed;
+            pauseAction.Disable();
+        }
+    }
+
+    private void OnPausePressed(InputAction.CallbackContext context)
+    {
+        if (!IsOwner)
+        {
+            return;
+        }
+
+        pauseMenu?.TogglePause();
     }
 
     // ---------------- INPUT ----------------
@@ -78,7 +103,8 @@ public class PlayerLauncher : NetworkBehaviour
     // ---------------- MOVEMENT ----------------
     private void ApplyMovement()
     {
-        if (!canMove) return;
+        if (!canMove || (pauseMenu != null && pauseMenu.IsPaused))
+            return;
 
         if (controller.isGrounded && velocity.y < 0)
             velocity.y = -2f;
