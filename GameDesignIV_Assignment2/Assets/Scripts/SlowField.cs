@@ -3,6 +3,7 @@ using UnityEngine;
 public class SlowField : MonoBehaviour
 {
     [SerializeField] private float slowMultiplier = 0.5f; // 0.5 = 50% speed
+    
 
     private void OnTriggerEnter(Collider other)
     {

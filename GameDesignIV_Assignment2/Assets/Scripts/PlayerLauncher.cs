@@ -1,104 +1,195 @@
 ﻿using UnityEngine;
 using Unity.Netcode;
 using UnityEngine.InputSystem;
+using TMPro;
 
 [RequireComponent(typeof(CharacterController))]
 [RequireComponent(typeof(PlayerInput))]
 public class PlayerLauncher : NetworkBehaviour
 {
-    [Header("Launch Settings")]
-    public float minForce = 10f;
-    public float maxForce = 40f;
-    public float chargeSpeed = 20f;
-    public float gravity = -20f;
+    [Header("Physics")]
+    public float gravity = -25f;
 
-    private float currentForce;
-    private bool isCharging;
+    [Header("Launch Settings")]
+    public float launchForce = 120f;
+    public float upwardBoost = 20f;
+    public float launchDamping = 3f;
+
     private Vector3 velocity;
+    private Vector3 launchVelocity;
 
     private CharacterController controller;
     private PlayerInput playerInput;
+
     private InputAction launchAction;
+    private InputAction pauseAction;
+
+    private PauseMenu pauseMenu;
+
+    [SerializeField] private TMP_Text countdownText;
+
+    private float countdownValue;
+    private bool isCountingDown;
+
+    private bool hasStartedMatch = false;
+    private bool canMove = false;
 
     private void Awake()
     {
         controller = GetComponent<CharacterController>();
-        playerInput = GetComponent<PlayerInput>(); 
+        playerInput = GetComponent<PlayerInput>();
     }
 
     public override void OnNetworkSpawn()
     {
         if (!IsOwner) return;
 
-        launchAction = playerInput.actions["Launch"];
-
-        launchAction.started += OnLaunchStarted;
-        launchAction.canceled += OnLaunchReleased;
-
+        launchAction = playerInput.actions["LaunchCountdown"];
         launchAction.Enable();
+        launchAction.performed += OnLaunchPressed;
+
+        if (countdownText != null)
+            countdownText.gameObject.SetActive(false);
+
+        pauseAction = playerInput.actions["Pause"];
+        pauseAction.Enable();
+        pauseAction.performed += OnPausePressed; 
+
+        pauseMenu = FindAnyObjectByType<PauseMenu>();
     }
 
-    public override void OnDestroy()
+    public override void OnNetworkDespawn()
     {
         if (launchAction != null)
         {
-            launchAction.started -= OnLaunchStarted;
-            launchAction.canceled -= OnLaunchReleased;
+            launchAction.performed -= OnLaunchPressed;
+            launchAction.Disable();
+        }
+
+        if (pauseAction != null)
+        {
+            pauseAction.performed -= OnPausePressed;
+            pauseAction.Disable();
         }
     }
 
+    private void OnPausePressed(InputAction.CallbackContext context)
+    {
+        if (!IsOwner)
+        {
+            return;
+        }
+
+        pauseMenu?.TogglePause();
+    }
+
+    // ---------------- INPUT ----------------
+    private void OnLaunchPressed(InputAction.CallbackContext context)
+    {
+        if (hasStartedMatch) return;
+
+        StartCountdown(3f);
+    }
+
+    // ---------------- UPDATE ----------------
     private void Update()
     {
         if (!IsOwner) return;
 
-        if (isCharging)
-        {
-            currentForce += chargeSpeed * Time.deltaTime;
-            currentForce = Mathf.Clamp(currentForce, minForce, maxForce);
-        }
-
+        HandleCountdown();
         ApplyMovement();
     }
 
-    private void OnLaunchStarted(InputAction.CallbackContext context)
-    {
-        isCharging = true;
-        currentForce = minForce;
-    }
-
-    private void OnLaunchReleased(InputAction.CallbackContext context)
-    {
-        isCharging = false;
-
-        ReleaseLaunchServerRpc(currentForce);
-    }
-
+    // ---------------- MOVEMENT ----------------
     private void ApplyMovement()
     {
+        if (!canMove || (pauseMenu != null && pauseMenu.IsPaused))
+            return;
+
         if (controller.isGrounded && velocity.y < 0)
-        {
             velocity.y = -2f;
-        }
 
         velocity.y += gravity * Time.deltaTime;
+
+        if (launchVelocity.magnitude > 0.1f)
+        {
+            controller.Move(launchVelocity * Time.deltaTime);
+
+            launchVelocity = Vector3.Lerp(
+                launchVelocity,
+                Vector3.zero,
+                launchDamping * Time.deltaTime
+            );
+        }
 
         controller.Move(velocity * Time.deltaTime);
     }
 
-    [ServerRpc]
-    private void ReleaseLaunchServerRpc(float force)
+    // ---------------- COUNTDOWN ----------------
+    public void StartCountdown(float time)
     {
-        LaunchClientRpc(force);
+        if (hasStartedMatch) return;
+
+        hasStartedMatch = true;
+        canMove = false;
+
+        countdownValue = time;
+        isCountingDown = true;
+
+        if (countdownText != null)
+        {
+            countdownText.gameObject.SetActive(true);
+            countdownText.text = Mathf.Ceil(time).ToString();
+        }
     }
 
-    [ClientRpc]
-    private void LaunchClientRpc(float force)
+    private void HandleCountdown()
     {
-        velocity = transform.forward * force;
+        if (!isCountingDown) return;
+
+        countdownValue -= Time.deltaTime;
+
+        if (countdownText != null)
+            countdownText.text = Mathf.Ceil(countdownValue).ToString();
+
+        if (countdownValue <= 0f)
+        {
+            isCountingDown = false;
+
+            if (countdownText != null)
+                countdownText.gameObject.SetActive(false);
+
+            canMove = true;
+
+            TriggerLaunch();
+        }
     }
 
+    // ---------------- LAUNCH ----------------
+    private void TriggerLaunch()
+    {
+        launchVelocity = transform.forward * launchForce;
+        launchVelocity.y += upwardBoost;
+    }
+
+    // ---------------- RESET ----------------
     public void ResetVelocity()
     {
         velocity = Vector3.zero;
+        launchVelocity = Vector3.zero;
+    }
+
+    public void ResetMatchState()
+    {
+        hasStartedMatch = false;
+        canMove = false;
+
+        countdownValue = 0f;
+        isCountingDown = false;
+
+        if (countdownText != null)
+            countdownText.gameObject.SetActive(false);
+
+        ResetVelocity();
     }
 }

@@ -61,7 +61,7 @@
                     "initialStateCheck": false
                 },
                 {
-                    "name": "Launch",
+                    "name": "LaunchCountdown",
                     "type": "Button",
                     "id": "da2a0abb-1a5a-4437-a94c-98c368066b4e",
                     "expectedControlType": "",
@@ -73,6 +73,15 @@
                     "name": "SwitchCamera",
                     "type": "Button",
                     "id": "d3f8be41-ebf1-469b-a2de-643cad103eff",
+                    "expectedControlType": "",
+                    "processors": "",
+                    "interactions": "",
+                    "initialStateCheck": false
+                },
+                {
+                    "name": "Pause",
+                    "type": "Button",
+                    "id": "50b48763-1cae-40bd-a5ad-609e63812362",
                     "expectedControlType": "",
                     "processors": "",
                     "interactions": "",
@@ -248,11 +257,11 @@
                 {
                     "name": "",
                     "id": "c03c172f-abed-4fec-ab2d-b2afaaabc1ac",
-                    "path": "<Keyboard>/space",
+                    "path": "<Keyboard>/t",
                     "interactions": "",
                     "processors": "",
                     "groups": "",
-                    "action": "Launch",
+                    "action": "LaunchCountdown",
                     "isComposite": false,
                     "isPartOfComposite": false
                 },
@@ -263,7 +272,7 @@
                     "interactions": "",
                     "processors": "",
                     "groups": "",
-                    "action": "Launch",
+                    "action": "LaunchCountdown",
                     "isComposite": false,
                     "isPartOfComposite": false
                 },
@@ -286,6 +295,28 @@
                     "processors": "",
                     "groups": "",
                     "action": "SwitchCamera",
+                    "isComposite": false,
+                    "isPartOfComposite": false
+                },
+                {
+                    "name": "",
+                    "id": "3c5c1078-d799-49bc-ae21-cb60ef3a6633",
+                    "path": "<Keyboard>/escape",
+                    "interactions": "",
+                    "processors": "",
+                    "groups": "",
+                    "action": "Pause",
+                    "isComposite": false,
+                    "isPartOfComposite": false
+                },
+                {
+                    "name": "",
+                    "id": "bca884dd-0cdf-440d-95c1-b40108627e0b",
+                    "path": "<Gamepad>/start",
+                    "interactions": "",
+                    "processors": "",
+                    "groups": "",
+                    "action": "Pause",
                     "isComposite": false,
                     "isPartOfComposite": false
                 }
