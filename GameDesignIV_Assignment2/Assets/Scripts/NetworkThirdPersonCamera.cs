@@ -54,24 +54,25 @@ public class NetworkThirdPersonCamera : NetworkBehaviour
 
     private void HandleLook()
     {
+        // 🚨 PAUSE CHECK (THIS IS THE FIX)
+        if (PauseMenu.Instance != null && PauseMenu.Instance.IsPaused)
+            return;
+
         Vector2 look = lookAction.ReadValue<Vector2>() * sensitivity;
 
-        // LOCAL INPUT ONLY
         yaw += look.x;
         pitch -= look.y;
         pitch = Mathf.Clamp(pitch, minPitch, maxPitch);
 
         cameraPivot.localRotation = Quaternion.Euler(pitch, 0f, 0f);
 
-        // SEND ONLY TO SERVER (no local transform override)
         SubmitRotationServerRpc(yaw, pitch);
     }
 
     private void FollowPlayer()
     {
-        Vector3 target = transform.position + Vector3.up * 1.5f; // head height
+        Vector3 target = transform.position + Vector3.up * 1.5f;
 
-        // Direction from player toward desired camera position
         Vector3 desiredDir = (cameraPivot.position - target).normalized;
 
         if (desiredDir == Vector3.zero)
@@ -81,10 +82,9 @@ public class NetworkThirdPersonCamera : NetworkBehaviour
 
         Vector3 finalPosition = target + desiredDir * desiredDistance;
 
-        // Raycast from player to camera target position
         if (Physics.SphereCast(
             target,
-            0.2f, // sphere radius = prevents wall edge clipping
+            0.2f,
             desiredDir,
             out RaycastHit hit,
             cameraDistance,
