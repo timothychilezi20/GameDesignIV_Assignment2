@@ -1,11 +1,15 @@
 using UnityEngine;
+using Unity.Netcode;
 
-public class ScoreManager : MonoBehaviour
+public class ScoreManager : NetworkBehaviour
 {
     public static ScoreManager Instance { get; private set; }
 
-    private int scorePlayer1 = 0;
-    private int scorePlayer2 = 0;
+    private NetworkVariable<int> scorePlayer1 = new NetworkVariable<int>(
+        0, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
+
+    private NetworkVariable<int> scorePlayer2 = new NetworkVariable<int>(
+        0, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
 
     void Awake()
     {
@@ -17,15 +21,31 @@ public class ScoreManager : MonoBehaviour
         Instance = this;
     }
 
-    public void AddScore(int player, int amount)
+    public override void OnNetworkSpawn()
     {
-        if (player == 1)
-            scorePlayer1 += amount;
-        else if (player == 2)
-            scorePlayer2 += amount;
-
-        Debug.Log($"Player 1: {scorePlayer1} | Player 2: {scorePlayer2}");
+        scorePlayer1.OnValueChanged += (oldValue, newValue) => OnScoreChanged();
+        scorePlayer2.OnValueChanged += (oldValue, newValue) => OnScoreChanged();
     }
 
-    public int GetScore(int player) => player == 1 ? scorePlayer1 : scorePlayer2;
+    public override void OnNetworkDespawn()
+    {
+        scorePlayer1.OnValueChanged -= (oldValue, newValue) => OnScoreChanged();
+        scorePlayer2.OnValueChanged -= (oldValue, newValue) => OnScoreChanged();
+    }
+
+    private void OnScoreChanged()
+    {
+        Debug.Log($"Player 1: {scorePlayer1.Value} | Player 2: {scorePlayer2.Value}");
+        // Hook your UI update here e.g. UpdateScoreUI()
+    }
+
+    public void AddScore(int player, int amount)
+    {
+        if (!IsServer) return;
+
+        if (player == 1) scorePlayer1.Value += amount;
+        else if (player == 2) scorePlayer2.Value += amount;
+    }
+
+    public int GetScore(int player) => player == 1 ? scorePlayer1.Value : scorePlayer2.Value;
 }

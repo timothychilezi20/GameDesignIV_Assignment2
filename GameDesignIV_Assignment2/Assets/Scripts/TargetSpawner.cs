@@ -1,8 +1,9 @@
 using UnityEngine;
 using System.Collections;
 using System.Collections.Generic;
+using Unity.Netcode;
 
-public class TargetSpawner : MonoBehaviour
+public class TargetSpawner : NetworkBehaviour
 {
     [Header("References")]
     [SerializeField] private GameObject orbPrefab;
@@ -14,10 +15,34 @@ public class TargetSpawner : MonoBehaviour
     [SerializeField] private float spawnInterval = 3f;
 
     private List<GameObject> activeTargets = new List<GameObject>();
+    private bool spawningStarted = false;
 
-    void Start()
+    public override void OnNetworkSpawn()
     {
-        StartCoroutine(SpawnRoutine());
+        if (!IsServer) return;
+
+        // Listen for clients connecting
+        NetworkManager.Singleton.OnClientConnectedCallback += OnClientConnected;
+    }
+
+    public override void OnNetworkDespawn()
+    {
+        if (!IsServer) return;
+
+        NetworkManager.Singleton.OnClientConnectedCallback -= OnClientConnected;
+    }
+
+    private void OnClientConnected(ulong clientId)
+    {
+        if (spawningStarted) return;
+
+        // Wait until exactly 2 players are connected
+        if (NetworkManager.Singleton.ConnectedClients.Count >= 2)
+        {
+            spawningStarted = true;
+            Debug.Log("Both players connected — starting target spawner");
+            StartCoroutine(SpawnRoutine());
+        }
     }
 
     private IEnumerator SpawnRoutine()
@@ -25,10 +50,7 @@ public class TargetSpawner : MonoBehaviour
         while (true)
         {
             yield return new WaitForSeconds(spawnInterval);
-
-            // Clean up destroyed targets
             activeTargets.RemoveAll(t => t == null);
-
             if (activeTargets.Count < maxTargets)
                 SpawnTarget();
         }
@@ -36,14 +58,14 @@ public class TargetSpawner : MonoBehaviour
 
     private void SpawnTarget()
     {
-        // Collect unoccupied spawn points
         List<Transform> freePoints = new List<Transform>();
         foreach (Transform point in spawnPoints)
         {
             bool occupied = false;
-            foreach (GameObject activetarget in activeTargets)
+            foreach (GameObject activeTarget in activeTargets)
             {
-                if (activetarget != null && Vector3.Distance(activetarget.transform.position, point.position) < 0.5f)
+                if (activeTarget != null &&
+                    Vector3.Distance(activeTarget.transform.position, point.position) < 0.5f)
                 {
                     occupied = true;
                     break;
@@ -56,11 +78,10 @@ public class TargetSpawner : MonoBehaviour
         if (freePoints.Count == 0) return;
 
         Transform spawnPoint = freePoints[Random.Range(0, freePoints.Count)];
-
-        // Pick prefab based on spawn point tag
         GameObject prefab = spawnPoint.CompareTag("WallSpawn") ? wallTargetPrefab : orbPrefab;
 
         GameObject target = Instantiate(prefab, spawnPoint.position, spawnPoint.rotation);
+        target.GetComponent<NetworkObject>().Spawn();
         activeTargets.Add(target);
     }
 }
