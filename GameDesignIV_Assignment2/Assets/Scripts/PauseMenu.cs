@@ -8,6 +8,7 @@ public class PauseMenu : MonoBehaviour
     public static PauseMenu Instance { get; private set; }
 
     [SerializeField] private GameObject pauseUI;
+    [SerializeField] private GameObject controlsUI;
     public bool IsPaused { get; private set; }
 
     private PlayerInput playerInput;
@@ -20,6 +21,9 @@ public class PauseMenu : MonoBehaviour
         {
             pauseUI.SetActive(false);
         }
+
+        if (controlsUI != null)
+            controlsUI.SetActive(false);
     }
 
     public void Initialize(PlayerInput input)
@@ -63,5 +67,28 @@ public class PauseMenu : MonoBehaviour
 
         if (playerInput != null)
             playerInput.enabled = true;
+    }
+
+    public void ShowControls()
+    {
+        if (controlsUI != null)
+            controlsUI.SetActive(true);
+
+        if (pauseUI != null)
+            pauseUI.SetActive(false);
+    }
+
+    public void HideControls()
+    {
+        if (controlsUI != null)
+            controlsUI.SetActive(false);
+
+        if (pauseUI != null)
+            pauseUI.SetActive(true);
+    }
+    
+    public void QuitGame()
+    {
+        Application.Quit();
     }
 }
