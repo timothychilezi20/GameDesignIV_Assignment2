@@ -1,7 +1,9 @@
-using Unity.Netcode;
+﻿using Unity.Netcode;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 using UnityEngine.InputSystem;
 using UnityEngine.UI;
+using System.Collections;
 
 [RequireComponent(typeof(CharacterController))]
 [RequireComponent(typeof(PlayerInput))]
@@ -29,12 +31,20 @@ public class NetworkFPSPlayer : NetworkBehaviour
         NetworkVariableWritePermission.Server
     );
 
+    private NetworkVariable<bool> isInvincibleNet = new NetworkVariable<bool>(
+        false,
+        NetworkVariableReadPermission.Everyone,
+        NetworkVariableWritePermission.Server
+    );
+
     private PlayerInput playerInput;
     private CharacterController characterController;
 
     private InputAction moveAction;
     private InputAction jumpAction;
     private InputAction dashAction;
+    private InputAction pauseAction;
+    private InputAction lookAction;
 
     private float verticalVelocity;
 
@@ -43,12 +53,23 @@ public class NetworkFPSPlayer : NetworkBehaviour
     private float dashCooldownRemaining;
     private Vector3 dashDirection;
 
+    private bool isStunned = false;
+    private float speedMultiplier = 1f;
+
+    private MapManager mapManager;
+
+    [Header("Laser")]
+    [SerializeField] private Transform laserOrigin;
+    [SerializeField] private LineRenderer laserLineRenderer;
+
     public bool IsAlive { get; private set; } = true;
 
     public override void OnNetworkSpawn()
     {
         characterController = GetComponent<CharacterController>();
         playerInput = GetComponent<PlayerInput>();
+
+        mapManager = MapManager.Instance;
 
         currentHealth.OnValueChanged += OnHealthChanged;
 
@@ -63,10 +84,19 @@ public class NetworkFPSPlayer : NetworkBehaviour
         moveAction = playerInput.actions["Move"];
         jumpAction = playerInput.actions["Jump"];
         dashAction = playerInput.actions["Dash"];
+        pauseAction = playerInput.actions["Pause"];
+        lookAction = playerInput.actions["Look"];
 
         moveAction.Enable();
         jumpAction.Enable();
         dashAction.Enable();
+        pauseAction.Enable();
+        lookAction.Enable();
+
+        if (PauseMenu.Instance != null)
+        {
+            PauseMenu.Instance.Initialize(playerInput);
+        }
 
         if (healthBarUI != null)
         {
@@ -77,28 +107,40 @@ public class NetworkFPSPlayer : NetworkBehaviour
 
         Cursor.lockState = CursorLockMode.Locked;
         Cursor.visible = false;
-    }
 
-    public override void OnNetworkDespawn()
-    {
-        currentHealth.OnValueChanged -= OnHealthChanged;
-
-        if (!IsOwner) return;
-
-        moveAction?.Disable();
-        jumpAction?.Disable();
-        dashAction?.Disable();
+        if (IsServer)
+        {
+            StartCoroutine(DelayedSpawn());
+        }
     }
 
     private void Update()
     {
         if (!IsOwner || !IsSpawned) return;
 
+        if (pauseAction != null && pauseAction.WasPressedThisFrame())
+        {
+            if (PauseMenu.Instance != null)
+            {
+                PauseMenu.Instance.TogglePause();
+
+                if (PauseMenu.Instance.IsPaused)
+                    lookAction.Disable();
+                else
+                    lookAction.Enable();
+            }
+        }
+
+        if (PauseMenu.Instance != null && PauseMenu.Instance.IsPaused)
+            return;
+
         HandleMovement();
     }
 
     private void HandleMovement()
     {
+        if (isStunned) return;
+
         Vector2 input = moveAction.ReadValue<Vector2>();
 
         Vector3 forward = transform.forward;
@@ -115,7 +157,7 @@ public class NetworkFPSPlayer : NetworkBehaviour
         if (move.magnitude > 1f)
             move.Normalize();
 
-        // Gravity
+        // Grounding
         if (characterController.isGrounded && verticalVelocity < 0f)
             verticalVelocity = -2f;
 
@@ -129,7 +171,6 @@ public class NetworkFPSPlayer : NetworkBehaviour
         if (dashCooldownRemaining > 0f)
             dashCooldownRemaining -= Time.deltaTime;
 
-        // Dash start
         if (dashAction.WasPressedThisFrame() && dashCooldownRemaining <= 0f && !isDashing)
         {
             isDashing = true;
@@ -146,14 +187,14 @@ public class NetworkFPSPlayer : NetworkBehaviour
         if (isDashing)
         {
             horizontalVelocity = dashDirection * dashSpeed;
-            dashTimeRemaining -= Time.deltaTime;
 
+            dashTimeRemaining -= Time.deltaTime;
             if (dashTimeRemaining <= 0f)
                 isDashing = false;
         }
         else
         {
-            horizontalVelocity = move * moveSpeed;
+            horizontalVelocity = move * moveSpeed * speedMultiplier;
         }
 
         verticalVelocity += gravity * Time.deltaTime;
@@ -184,8 +225,6 @@ public class NetworkFPSPlayer : NetworkBehaviour
 
         if (currentHealth.Value <= 0f)
         {
-            currentHealth.Value = 0f;
-            IsAlive = false;
             Die();
         }
     }
@@ -208,13 +247,98 @@ public class NetworkFPSPlayer : NetworkBehaviour
         currentHealth.Value = maxHealth;
         IsAlive = true;
 
-        transform.position = Vector3.zero;
-
         verticalVelocity = 0f;
         isDashing = false;
         dashTimeRemaining = 0f;
 
-        Cursor.visible = true;
-        Cursor.lockState = CursorLockMode.None;
+        SetSpawnPosition();
     }
+
+    private IEnumerator DelayedSpawn()
+    {
+        while (MapManager.Instance == null)
+            yield return null;
+
+        mapManager = MapManager.Instance;
+
+        while (!mapManager.CanSpawn())
+            yield return null;
+
+        SetSpawnPosition();
+    }
+
+    private void SetSpawnPosition()
+    {
+        if (mapManager == null)
+        {
+            Debug.LogError("MapManager not found!");
+            return;
+        }
+
+        Transform spawn = mapManager.GetActiveLaunchPoint();
+
+        if (spawn == null)
+        {
+            Debug.LogError("Spawn point is null");
+            return;
+        }
+
+        characterController.enabled = false;
+        transform.SetPositionAndRotation(spawn.position, spawn.rotation);
+        characterController.enabled = true;
+    }
+
+    // ---------------- SPEED SYSTEM ----------------
+
+    public void ApplySpeedMultiplier(float multiplier)
+    {
+        speedMultiplier = multiplier;
+    }
+
+    public void ResetSpeedMultiplier()
+    {
+        speedMultiplier = 1f;
+    }
+
+    // ---------------- STUN SYSTEM ----------------
+
+    public void ApplyStun(float stunDuration, float invincibleDuration)
+    {
+        ApplyStunClientRpc(stunDuration, invincibleDuration);
+    }
+
+    [ClientRpc]
+    private void ApplyStunClientRpc(float stunDuration, float invincibleDuration)
+    {
+        if (!IsOwner) return;
+
+        if (isInvincibleNet.Value) return;
+
+        StartCoroutine(StunRoutine(stunDuration, invincibleDuration));
+    }
+
+    private IEnumerator StunRoutine(float stunDuration, float invincibleDuration)
+    {
+        isStunned = true;
+        ApplySpeedMultiplier(0f);
+
+        isDashing = false;
+        dashTimeRemaining = 0f;
+
+        yield return new WaitForSeconds(stunDuration);
+
+        isStunned = false;
+        ResetSpeedMultiplier();
+
+        isInvincibleNet.Value = true;
+
+        yield return new WaitForSeconds(invincibleDuration);
+
+        isInvincibleNet.Value = false;
+    }
+
+    // ---------------- LASER ----------------
+
+    public LineRenderer GetLaserLineRenderer() => laserLineRenderer;
+    public Transform GetLaserOrigin() => laserOrigin;
 }
