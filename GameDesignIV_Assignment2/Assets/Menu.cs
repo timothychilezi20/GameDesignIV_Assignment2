@@ -17,7 +17,7 @@ public class Menu : MonoBehaviour
     [SerializeField] private NetworkManager networkManager;
 
     [Header("Scene")]
-    [SerializeField] private string gameSceneName = "TopDownCamScene";
+    [SerializeField] private string gameSceneName = "apayin";
 
     private void Awake()
     {
