@@ -34,6 +34,7 @@ public class PlayerController : NetworkBehaviour
     {
         rb = GetComponent<Rigidbody>();
         rb.freezeRotation = true;
+        rb.useGravity = false; // gravity off until launched
         rb.constraints = RigidbodyConstraints.FreezePositionY
                        | RigidbodyConstraints.FreezeRotationX
                        | RigidbodyConstraints.FreezeRotationZ;
@@ -91,7 +92,7 @@ public class PlayerController : NetworkBehaviour
 
     void Update()
     {
-        Debug.Log($"PlayerController Update — IsOwner: {IsOwner} playerNumber: {playerNumber} OwnerClientId: {OwnerClientId}");
+        
        
         if (!IsOwner) return;
         FaceMouseCursor();
@@ -155,6 +156,19 @@ public class PlayerController : NetworkBehaviour
     public void ApplyStun(float stunDuration, float invincibleDuration)
     {
         ApplyStunClientRpc(stunDuration, invincibleDuration);
+    }
+
+    public void Launch(Vector3 direction, float force)
+    {
+        // Unlock Y so players can fly and bounce freely
+        ///rb.constraints = RigidbodyConstraints.FreezeRotationX
+                       //| RigidbodyConstraints.FreezeRotationZ;
+
+        rb.useGravity = true;
+
+        // Zero out any residual velocity then apply the launch impulse
+        rb.linearVelocity = Vector3.zero;
+        rb.AddForce(direction.normalized * force, ForceMode.Impulse);
     }
 
     [ClientRpc]
