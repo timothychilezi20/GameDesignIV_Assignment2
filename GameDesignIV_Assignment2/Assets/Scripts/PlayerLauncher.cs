@@ -3,191 +3,224 @@ using Unity.Netcode;
 using UnityEngine.InputSystem;
 using TMPro;
 
-[RequireComponent(typeof(CharacterController))]
-[RequireComponent(typeof(PlayerInput))]
+/// <summary>
+/// PlayerLauncher — fires the player horizontally from their spawn point when
+/// the countdown hits zero. Movement during the launch phase is handled entirely
+/// by the Rigidbody (set in PlayerController). This script owns the countdown,
+/// the initial impulse, and the transition back to normal player control once
+/// the player has slowed to a stop naturally via physics drag + bouncing.
+///
+/// SETUP NOTES:
+///   • Attach a PhysicsMaterial to the player's Collider with:
+///       Bounciness        : 0.6  (adjust to taste)
+///       Bounce Combine    : Maximum
+///       Dynamic Friction  : 0.1
+///       Static Friction   : 0.1
+///       Friction Combine  : Minimum
+///   • Set Rigidbody.drag to ~0.5 so the player naturally decelerates after bouncing.
+///   • Wall/bumper colliders on the map should also have a PhysicsMaterial with
+///     Bounciness 0.6–1.0 and Bounce Combine set to Maximum.
+///   • The spawn point's forward vector is the exact horizontal fire direction —
+///     make sure spawn point Transforms face into the map.
+/// </summary>
 public class PlayerLauncher : NetworkBehaviour
 {
-    [Header("Physics")]
-    public float gravity = -25f;
+    // =========================================================================
+    // Inspector
+    // =========================================================================
 
     [Header("Launch Settings")]
-    public float launchForce = 120f;
-    public float launchDamping = 3f;
+    [Tooltip("Horizontal impulse force applied at launch.")]
+    public float launchForce = 200f;
 
-    private Vector3 velocity;
-    private Vector3 launchVelocity;
+    [Tooltip("Rigidbody speed below which the player is considered stopped " +
+             "and normal movement control is restored.")]
+    public float controlRestoreSpeed = 1.5f;
 
-    private CharacterController controller;
-    private PlayerInput playerInput;
+    [Tooltip("How long (seconds) after launch before we start checking if the " +
+             "player has slowed enough to restore control. Prevents instant restore " +
+             "if launch force is low.")]
+    public float controlRestoreDelay = 0.5f;
 
-    private InputAction launchAction;
-    private InputAction pauseAction;
-
-    private PauseMenu pauseMenu;
-
+    [Header("Countdown")]
     [SerializeField] private TMP_Text countdownText;
 
-    private float countdownValue;
-    private bool isCountingDown;
+    // =========================================================================
+    // Private state
+    // =========================================================================
 
-    private bool hasStartedMatch = false;
-    public bool canMove = false;
+    private PlayerController _playerController;
+    private Rigidbody _rb;
+    private PlayerInput _playerInput;
+    private PauseMenu _pauseMenu;
+    private InputAction _pauseAction;
+
+    private float _countdownValue;
+    private bool _isCountingDown = false;
+    private bool _hasLaunched = false;
+    private float _timeSinceLaunch = 0f;
+
+    // =========================================================================
+    // Init
+    // =========================================================================
 
     private void Awake()
     {
-        controller = GetComponent<CharacterController>();
-        playerInput = GetComponent<PlayerInput>();
+        _playerController = GetComponent<PlayerController>();
+        _rb = GetComponent<Rigidbody>();
+        _playerInput = GetComponent<PlayerInput>();
     }
 
     public override void OnNetworkSpawn()
     {
         if (!IsOwner) return;
 
-        launchAction = playerInput.actions["LaunchCountdown"];
-        launchAction.Enable();
-        launchAction.performed += OnLaunchPressed;
+        // Pause input only — launch is triggered by countdown, not player input
+        _pauseAction = _playerInput.actions["Pause"];
+        _pauseAction.Enable();
+        _pauseAction.performed += OnPausePressed;
 
         if (countdownText != null)
             countdownText.gameObject.SetActive(false);
 
-        pauseAction = playerInput.actions["Pause"];
-        pauseAction.Enable();
-        pauseAction.performed += OnPausePressed;
-
-        pauseMenu = FindAnyObjectByType<PauseMenu>();
+        _pauseMenu = FindAnyObjectByType<PauseMenu>();
     }
 
     public override void OnNetworkDespawn()
     {
-        if (launchAction != null)
+        if (_pauseAction != null)
         {
-            launchAction.performed -= OnLaunchPressed;
-            launchAction.Disable();
-        }
-
-        if (pauseAction != null)
-        {
-            pauseAction.performed -= OnPausePressed;
-            pauseAction.Disable();
+            _pauseAction.performed -= OnPausePressed;
+            _pauseAction.Disable();
         }
     }
 
-    private void OnPausePressed(InputAction.CallbackContext context)
+    private void OnPausePressed(InputAction.CallbackContext ctx)
     {
         if (!IsOwner) return;
-        pauseMenu?.TogglePause();
+        _pauseMenu?.TogglePause();
     }
 
-    private void OnLaunchPressed(InputAction.CallbackContext context)
-    {
-        if (hasStartedMatch) return;
-        StartCountdown(3f);
-    }
+    // =========================================================================
+    // Update
+    // =========================================================================
 
     private void Update()
     {
         if (!IsOwner) return;
 
         HandleCountdown();
-        ApplyMovement();
+
+        if (_hasLaunched)
+            CheckRestoreControl();
     }
 
-    // -------------------------------------------------------
-    // Movement — gravity and launch velocity only (owns Y axis)
-    // -------------------------------------------------------
-    private void ApplyMovement()
-    {
-        if (!canMove || (pauseMenu != null && pauseMenu.IsPaused))
-            return;
-
-        if (controller.isGrounded && velocity.y < 0)
-            velocity.y = -2f;
-
-        velocity.y += gravity * Time.deltaTime;
-
-        if (launchVelocity.magnitude > 0.1f)
-        {
-            controller.Move(launchVelocity * Time.deltaTime);
-
-            launchVelocity = Vector3.Lerp(
-                launchVelocity,
-                Vector3.zero,
-                launchDamping * Time.deltaTime
-            );
-        }
-
-        controller.Move(velocity * Time.deltaTime);
-    }
-
-    // -------------------------------------------------------
+    // =========================================================================
     // Countdown
-    // -------------------------------------------------------
-    public void StartCountdown(float time)
+    // =========================================================================
+
+    /// <summary>
+    /// Called by SpawnManager on the owning client after placement.
+    /// </summary>
+    public void StartCountdown(float duration)
     {
-        if (hasStartedMatch) return;
+        if (_isCountingDown || _hasLaunched) return;
 
-        hasStartedMatch = true;
-        canMove = false;
-
-        countdownValue = time;
-        isCountingDown = true;
+        _countdownValue = duration;
+        _isCountingDown = true;
 
         if (countdownText != null)
         {
             countdownText.gameObject.SetActive(true);
-            countdownText.text = Mathf.Ceil(time).ToString();
+            countdownText.text = Mathf.Ceil(_countdownValue).ToString();
         }
+
+        // Keep player frozen while countdown runs
+        _playerController.SetMovementLocked(true);
     }
 
     private void HandleCountdown()
     {
-        if (!isCountingDown) return;
+        if (!_isCountingDown) return;
 
-        countdownValue -= Time.deltaTime;
+        _countdownValue -= Time.deltaTime;
 
         if (countdownText != null)
-            countdownText.text = Mathf.Ceil(countdownValue).ToString();
+            countdownText.text = Mathf.Ceil(Mathf.Max(_countdownValue, 0f)).ToString();
 
-        if (countdownValue <= 0f)
+        if (_countdownValue <= 0f)
         {
-            isCountingDown = false;
+            _isCountingDown = false;
 
             if (countdownText != null)
                 countdownText.gameObject.SetActive(false);
 
-            canMove = true;
-            TriggerLaunch();
+            FireLaunch();
         }
     }
 
-    // -------------------------------------------------------
-    // Launch — forward only, no upward boost
-    // -------------------------------------------------------
-    public void TriggerLaunch()
+    // =========================================================================
+    // Launch — pure horizontal impulse along spawn-point forward
+    // =========================================================================
+
+    private void FireLaunch()
     {
-        launchVelocity = transform.forward * launchForce;
+        // Launch direction is baked into PlayerController by SpawnManager
+        // before placement, so it always matches the spawn point's forward.
+        Vector3 direction = _playerController.GetLaunchDirection();
+
+        // Flatten to horizontal — no vertical component at all
+        direction.y = 0f;
+        direction = direction.normalized;
+
+        _hasLaunched = true;
+        _timeSinceLaunch = 0f;
+
+        // ExecuteLaunch unlocks movement, enables gravity, and fires the impulse
+        _playerController.ExecuteLaunch(direction, launchForce);
+
+        Debug.Log($"[PlayerLauncher] Fired — direction:{direction} force:{launchForce}");
     }
 
-    // -------------------------------------------------------
-    // Reset
-    // -------------------------------------------------------
-    public void ResetVelocity()
+    // =========================================================================
+    // Control restore — waits for the Rigidbody to slow naturally via drag
+    // and PhysicsMaterial friction after bouncing around the map
+    // =========================================================================
+
+    private void CheckRestoreControl()
     {
-        velocity = Vector3.zero;
-        launchVelocity = Vector3.zero;
+        _timeSinceLaunch += Time.deltaTime;
+
+        // Don't check too early — player may not have even left the corridor yet
+        if (_timeSinceLaunch < controlRestoreDelay) return;
+
+        float speed = _rb.linearVelocity.magnitude;
+
+        if (speed <= controlRestoreSpeed)
+        {
+            _hasLaunched = false;
+
+            // Hand control back to PlayerController's normal movement loop
+            _playerController.SetMovementLocked(false);
+
+            Debug.Log("[PlayerLauncher] Player settled — control restored.");
+        }
     }
+
+    // =========================================================================
+    // Reset — called by SpawnManager on each respawn
+    // =========================================================================
 
     public void ResetMatchState()
     {
-        hasStartedMatch = false;
-        canMove = false;
-
-        countdownValue = 0f;
-        isCountingDown = false;
+        _isCountingDown = false;
+        _hasLaunched = false;
+        _timeSinceLaunch = 0f;
+        _countdownValue = 0f;
 
         if (countdownText != null)
             countdownText.gameObject.SetActive(false);
 
-        ResetVelocity();
+        _playerController.SetMovementLocked(true);
     }
 }

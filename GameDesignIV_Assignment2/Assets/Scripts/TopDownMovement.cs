@@ -3,9 +3,22 @@ using UnityEngine;
 using UnityEngine.InputSystem;
 using Unity.Netcode;
 
+/// <summary>
+/// PlayerController — all movement and rotation driven exclusively through Rigidbody.
+///
+/// Movement:  rb.linearVelocity  (grounded = surface-projected, airborne = reduced)
+/// Rotation:  rb.MoveRotation    (faces mouse cursor each FixedUpdate)
+/// Launch:    rb.AddForce        (impulse, then physics takes over until speed drops)
+///
+/// Transform.position and Transform.rotation are NEVER written directly.
+/// </summary>
 [RequireComponent(typeof(Rigidbody))]
 public class PlayerController : NetworkBehaviour
 {
+    // =========================================================================
+    // Inspector
+    // =========================================================================
+
     [Header("Movement")]
     [SerializeField] private float moveSpeed = 5f;
     [SerializeField] private float rotationSpeed = 15f;
@@ -18,31 +31,35 @@ public class PlayerController : NetworkBehaviour
     [SerializeField] private Transform laserOrigin;
     [SerializeField] private LineRenderer laserLineRenderer;
 
+    [Header("Launch")]
+    [SerializeField] private float launchSpeedThreshold = 3f;
+
+    // =========================================================================
+    // Private state
+    // =========================================================================
+
     private Rigidbody rb;
     private Camera cam;
+
     private Vector3 moveInput;
     private Vector2 lookInput;
 
-    [Header("Launch")]
-    [SerializeField] private float launchSpeedThreshold = 3f; // resume normal movement below this speed
-
     private bool _isLaunching = false;
-    private bool isStunned = false;
     private bool _launched = false;
     private bool _movementLocked = true;
+    private bool isStunned = false;
+
+    private Vector3 _surfaceNormal = Vector3.up;
+    private bool _isGrounded = false;
+    private Vector3 _launchDirection = Vector3.forward;
+
+    private float speedMultiplier = 1f;
+    public int playerNumber;
 
     private NetworkVariable<bool> isInvincibleNet = new NetworkVariable<bool>(
         false, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Owner);
 
     public bool IsInvincible => isInvincibleNet.Value;
-
-    private float speedMultiplier = 1f;
-    public int playerNumber;
-
-    private Vector3 _surfaceNormal = Vector3.up;
-    private bool _isGrounded = false;
-
-    private Vector3 _launchDirection = Vector3.forward;
 
     // =========================================================================
     // Init
@@ -51,7 +68,7 @@ public class PlayerController : NetworkBehaviour
     void Awake()
     {
         rb = GetComponent<Rigidbody>();
-        rb.freezeRotation = true;
+        rb.freezeRotation = true;   // we control rotation via rb.MoveRotation
         rb.useGravity = false;
         rb.constraints = RigidbodyConstraints.FreezeAll;
     }
@@ -61,11 +78,7 @@ public class PlayerController : NetworkBehaviour
         playerNumber = OwnerClientId == 0 ? 1 : 2;
 
         if (IsOwner)
-        {
-            // Wait a frame for PlayerCamera to activate the top-down camera
-            // before we try to find it
             StartCoroutine(InitOwner());
-        }
         else
         {
             PlayerInput input = GetComponent<PlayerInput>();
@@ -75,36 +88,24 @@ public class PlayerController : NetworkBehaviour
 
     private IEnumerator InitOwner()
     {
-        // Frame 1: let PlayerCamera.OnNetworkSpawn run and activate the camera
-        yield return null;
+        yield return null; // let PlayerCamera.OnNetworkSpawn run first
 
-        // Grab the camera from the sibling PlayerCamera component so we always
-        // get the camera that belongs to THIS player, not Camera.main which
-        // could be ambiguous in a two-player scene
         PlayerCamera playerCam = GetComponent<PlayerCamera>();
         if (playerCam != null)
-        {
-            // Access the camera through the component using the serialized field
-            // via a public getter we'll add to PlayerCamera (see below)
             cam = playerCam.GetCamera();
-        }
 
-        // Fallback to Camera.main if no PlayerCamera found
         if (cam == null)
         {
             cam = Camera.main;
-            Debug.LogWarning("[PlayerController] Could not get camera from PlayerCamera — " +
-                             "falling back to Camera.main.");
+            Debug.LogWarning("[PlayerController] Falling back to Camera.main.");
         }
-
         if (cam == null)
             Debug.LogError("[PlayerController] No camera found.");
 
         Cursor.visible = false;
         Cursor.lockState = CursorLockMode.Confined;
 
-        // Frame 2: register with LaserManager
-        yield return null;
+        yield return null; // second frame — LaserManager is ready
 
         if (LaserManager.Instance == null) { Debug.LogError("LaserManager null"); yield break; }
         RegisterWithLaserManagerServerRpc(playerNumber);
@@ -118,34 +119,36 @@ public class PlayerController : NetworkBehaviour
     }
 
     // =========================================================================
-    // Update / FixedUpdate
+    // Update — input reads only, no physics writes here
     // =========================================================================
 
     void Update()
     {
-        if (!IsOwner) return;
-        FaceMouseCursor();
+        // Nothing physics-related in Update — all rb writes happen in FixedUpdate
     }
+
+    // =========================================================================
+    // FixedUpdate — single place where ALL rb writes happen
+    // =========================================================================
 
     void FixedUpdate()
     {
         if (!IsOwner || _movementLocked || !_launched) return;
 
         CheckGround();
+        RotateTowardMouse();
 
-        // While launching, let physics handle movement naturally
-        // Only resume player control once velocity slows below threshold
         if (_isLaunching)
         {
-            float horizontalSpeed = new Vector3(
+            float hSpeed = new Vector3(
                 rb.linearVelocity.x, 0f, rb.linearVelocity.z).magnitude;
 
-            if (horizontalSpeed <= launchSpeedThreshold)
+            if (hSpeed <= launchSpeedThreshold)
             {
                 _isLaunching = false;
-                Debug.Log("[PlayerController] Launch complete, resuming normal movement");
+                Debug.Log("[PlayerController] Launch complete — resuming normal movement.");
             }
-            return; // don't apply movement input during launch
+            return; // physics controls movement during launch
         }
 
         ApplyMovement();
@@ -157,7 +160,7 @@ public class PlayerController : NetworkBehaviour
 
     private void CheckGround()
     {
-        Vector3 origin = transform.position + Vector3.up * 0.1f;
+        Vector3 origin = rb.position + Vector3.up * 0.1f;
 
         if (Physics.SphereCast(origin, 0.25f, Vector3.down, out RaycastHit hit,
                                groundCheckDistance + 0.1f, mapLayerMask))
@@ -173,13 +176,14 @@ public class PlayerController : NetworkBehaviour
     }
 
     // =========================================================================
-    // Movement
+    // Movement — rb.linearVelocity only
     // =========================================================================
 
     private void ApplyMovement()
     {
         if (!_isGrounded)
         {
+            // Reduced air control
             rb.linearVelocity = new Vector3(
                 moveInput.x * moveSpeed * speedMultiplier * 0.3f,
                 rb.linearVelocity.y,
@@ -188,12 +192,46 @@ public class PlayerController : NetworkBehaviour
             return;
         }
 
+        // Project movement onto the surface so the player walks flush with tilted maps
         Vector3 right = Vector3.ProjectOnPlane(Vector3.right, _surfaceNormal).normalized;
         Vector3 forward = Vector3.ProjectOnPlane(Vector3.forward, _surfaceNormal).normalized;
-        Vector3 move = (right * moveInput.x + forward * moveInput.z) * moveSpeed * speedMultiplier;
+        Vector3 move = (right * moveInput.x + forward * moveInput.z)
+                          * moveSpeed * speedMultiplier;
 
         rb.linearVelocity = new Vector3(move.x, rb.linearVelocity.y, move.z);
     }
+
+    // =========================================================================
+    // Rotation — rb.MoveRotation only
+    // =========================================================================
+
+    private void RotateTowardMouse()
+    {
+        if (cam == null) return;
+
+        Ray ray = cam.ScreenPointToRay(lookInput);
+        Plane groundPlane = new Plane(Vector3.up, new Vector3(0f, rb.position.y, 0f));
+
+        if (!groundPlane.Raycast(ray, out float distance)) return;
+
+        Vector3 worldPoint = ray.GetPoint(distance);
+        Vector3 direction = worldPoint - rb.position;
+        direction.y = 0f;
+
+        if (direction.sqrMagnitude < 0.001f) return;
+
+        Quaternion targetRot = Quaternion.LookRotation(direction);
+
+        Quaternion newRot = rotationSpeed <= 0f
+            ? targetRot
+            : Quaternion.Slerp(rb.rotation, targetRot, Time.fixedDeltaTime * rotationSpeed);
+
+        rb.MoveRotation(newRot);
+    }
+
+    // =========================================================================
+    // Input callbacks
+    // =========================================================================
 
     void OnMove(InputValue value)
     {
@@ -206,41 +244,6 @@ public class PlayerController : NetworkBehaviour
     {
         if (!IsOwner) return;
         lookInput = value.Get<Vector2>();
-    }
-
-    // =========================================================================
-    // Face mouse — updated for top-down camera
-    // =========================================================================
-
-    void FaceMouseCursor()
-    {
-        if (cam == null) return;
-
-        Ray ray = cam.ScreenPointToRay(lookInput);
-
-        // For a top-down camera the ground plane sits at the player's Y position
-        // so the rotation stays flat regardless of map tilt
-        Plane groundPlane = new Plane(Vector3.up, new Vector3(0f, transform.position.y, 0f));
-
-        if (groundPlane.Raycast(ray, out float distance))
-        {
-            Vector3 worldPoint = ray.GetPoint(distance);
-            Vector3 direction = worldPoint - transform.position;
-
-            // Only rotate on the horizontal plane — ignore any Y component so
-            // the player never tilts to look up/down at the camera
-            direction.y = 0f;
-
-            if (direction.sqrMagnitude > 0.001f)
-            {
-                Quaternion targetRotation = Quaternion.LookRotation(direction);
-
-                transform.rotation = rotationSpeed <= 0f
-                    ? targetRotation
-                    : Quaternion.Slerp(transform.rotation, targetRotation,
-                                       Time.deltaTime * rotationSpeed);
-            }
-        }
     }
 
     // =========================================================================
@@ -262,14 +265,10 @@ public class PlayerController : NetworkBehaviour
         rb.angularVelocity = Vector3.zero;
         rb.AddForce(direction.normalized * force, ForceMode.Impulse);
 
-        Debug.Log($"[PlayerController] Launched in direction {direction} with force {force}");
+        Debug.Log($"[PlayerController] Launched — direction:{direction} force:{force}");
     }
 
-    public void SetLaunchDirection(Vector3 direction)
-    {
-        _launchDirection = direction.normalized;
-    }
-
+    public void SetLaunchDirection(Vector3 direction) => _launchDirection = direction.normalized;
     public Vector3 GetLaunchDirection() => _launchDirection;
 
     public void SetMovementLocked(bool locked)
@@ -281,16 +280,10 @@ public class PlayerController : NetworkBehaviour
             rb.linearVelocity = Vector3.zero;
             rb.angularVelocity = Vector3.zero;
             rb.useGravity = false;
-
-            // Freeze position while locked so player stays put
-            rb.constraints = RigidbodyConstraints.FreezePosition
-                           | RigidbodyConstraints.FreezeRotationX
-                           | RigidbodyConstraints.FreezeRotationY
-                           | RigidbodyConstraints.FreezeRotationZ;
+            rb.constraints = RigidbodyConstraints.FreezeAll;
         }
         else
         {
-            // Restore normal constraints when unlocked
             rb.constraints = RigidbodyConstraints.FreezeRotationX
                            | RigidbodyConstraints.FreezeRotationY
                            | RigidbodyConstraints.FreezeRotationZ;
@@ -305,6 +298,42 @@ public class PlayerController : NetworkBehaviour
     {
         if (!IsOwner) return;
         ExecuteLaunch(direction, force);
+    }
+
+    // =========================================================================
+    // Spawn placement — uses rb.position + rb.rotation, never Transform
+    // =========================================================================
+
+    public void PlaceAtSpawnPoint(Vector3 position, Quaternion rotation)
+    {
+        _launchDirection = rotation * Vector3.forward;
+        _launched = false;
+        _isLaunching = false;
+        _movementLocked = true;
+
+        rb.useGravity = false;
+        rb.linearVelocity = Vector3.zero;
+        rb.angularVelocity = Vector3.zero;
+        rb.constraints = RigidbodyConstraints.FreezeAll;
+
+        // Raycast down from above the spawn point to land cleanly on the surface
+        Vector3 correctedPos = position;
+        Vector3 rayOrigin = position + Vector3.up * 2f;
+
+        if (Physics.Raycast(rayOrigin, Vector3.down, out RaycastHit hit, 4f, mapLayerMask))
+        {
+            correctedPos = hit.point + Vector3.up * 0.6f;
+            Debug.Log($"[PlayerController] Surface at {hit.point} — placing at {correctedPos}");
+        }
+        else
+        {
+            correctedPos = new Vector3(position.x, position.y + 0.6f, position.z);
+            Debug.LogWarning("[PlayerController] No surface under spawn point — using offset.");
+        }
+
+        // Use rb.position and rb.rotation — no Transform writes
+        rb.position = correctedPos;
+        rb.rotation = rotation;
     }
 
     // =========================================================================
@@ -338,44 +367,30 @@ public class PlayerController : NetworkBehaviour
         isInvincibleNet.Value = false;
     }
 
+    // =========================================================================
+    // Accessors
+    // =========================================================================
+
     public LineRenderer GetLaserLineRenderer() => laserLineRenderer;
     public Transform GetLaserOrigin() => laserOrigin;
 
-    public void PlaceAtSpawnPoint(Vector3 position, Quaternion rotation)
+    // =========================================================================
+    // Editor gizmos
+    // =========================================================================
+
+#if UNITY_EDITOR
+    private void OnDrawGizmos()
     {
+        Vector3 origin = transform.position;
+        Vector3 end = origin + _launchDirection * 5f;
 
-        _launchDirection = rotation * Vector3.forward;
-        // Reset all launch state
-        _launched = false;
-        _isLaunching = false;
-        _movementLocked = true;
-
-        // Fully stop physics
-        rb.useGravity = false;
-        rb.linearVelocity = Vector3.zero;
-        rb.angularVelocity = Vector3.zero;
-        rb.constraints = RigidbodyConstraints.FreezeAll;
-
-        // Raycast up from the spawn point to find the surface
-        // This corrects for spawn points placed inside or below geometry
-        Vector3 correctedPosition = position;
-        Vector3 rayOrigin = position + Vector3.up * 2f;
-
-        if (Physics.Raycast(rayOrigin, Vector3.down, out RaycastHit hit, 4f, mapLayerMask))
-        {
-            // Place the player on top of the surface with a small offset
-            correctedPosition = hit.point + Vector3.up * 0.6f;
-            Debug.Log($"[PlayerController] Surface found at {hit.point}, placing at {correctedPosition}");
-        }
-        else
-        {
-            // No surface found — use spawn point Y but add capsule half height
-            correctedPosition = new Vector3(position.x, position.y + 0.6f, position.z);
-            Debug.LogWarning("[PlayerController] No surface found under spawn point — using offset position");
-        }
-
-        transform.SetPositionAndRotation(correctedPosition, rotation);
-        rb.position = correctedPosition;
-        rb.rotation = rotation;
+        UnityEditor.Handles.color = Color.cyan;
+        UnityEditor.Handles.DrawLine(origin, end, 2f);
+        UnityEditor.Handles.ArrowHandleCap(
+            0, origin,
+            Quaternion.LookRotation(_launchDirection),
+            5f, EventType.Repaint);
+        UnityEditor.Handles.Label(end, $"Launch: {_launchDirection:F2}");
     }
+#endif
 }

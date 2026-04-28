@@ -457,7 +457,7 @@ SphereCollider:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 2228617528209205238}
-  m_Material: {fileID: 0}
+  m_Material: {fileID: 13400000, guid: 7450837a25c44c746ac909b66d84a57f, type: 2}
   m_IncludeLayers:
     serializedVersion: 2
     m_Bits: 0
@@ -504,7 +504,7 @@ CharacterController:
     m_Bits: 0
   m_LayerOverridePriority: 0
   m_ProvidesContacts: 0
-  m_Enabled: 1
+  m_Enabled: 0
   serializedVersion: 3
   m_Height: 1
   m_Radius: 0.5
@@ -526,11 +526,10 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::PlayerLauncher
   ShowTopMostFoldoutHeaderGroup: 1
-  gravity: -25
   launchForce: 120
-  launchDamping: 3
+  controlRestoreSpeed: 1.5
+  controlRestoreDelay: 0.5
   countdownText: {fileID: 2004598079580652388}
-  canMove: 0
 --- !u!114 &4202549286247645757
 MonoBehaviour:
   m_ObjectHideFlags: 0
