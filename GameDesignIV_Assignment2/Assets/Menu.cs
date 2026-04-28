@@ -19,38 +19,60 @@ public class Menu : MonoBehaviour
     [Header("Scene")]
     [SerializeField] private string gameSceneName = "apayin";
 
+    [Header("Audio")]
+    [SerializeField] private AudioSource buttonSfx;
+
     private void Awake()
     {
         if (ipInput) ipInput.text = defaultIP;
         if (portInput) portInput.text = defaultPort.ToString();
+
+        if (buttonSfx != null)
+        {
+            DontDestroyOnLoad(buttonSfx.gameObject);
+        }
     }
 
     public void StartHost()
     {
+        PlayButtonSound();
+
         ushort port = GetPort();
         transport.SetConnectionData("0.0.0.0", port);
 
         networkManager.StartHost();
-
         networkManager.SceneManager.LoadScene(gameSceneName, UnityEngine.SceneManagement.LoadSceneMode.Single);
     }
 
     public void JoinGame()
     {
+        PlayButtonSound();
+
         string ip = GetIP();
         ushort port = GetPort();
 
         transport.SetConnectionData(ip, port);
-
         networkManager.StartClient();
+
     }
 
     public void StartServerOnly()
     {
+        PlayButtonSound();
+
         ushort port = GetPort();
         transport.SetConnectionData("0.0.0.0", port);
-
         networkManager.StartServer();
+    }
+
+    private void PlayButtonSound()
+    {
+        if (buttonSfx != null)
+        {
+            buttonSfx.Play();
+            Debug.Log("Button SFX AudioSource!");
+
+        }
     }
 
     private string GetIP()
