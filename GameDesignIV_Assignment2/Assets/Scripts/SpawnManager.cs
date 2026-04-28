@@ -11,12 +11,12 @@ public class SpawnManager : NetworkBehaviour
         StartCoroutine(RespawnCoroutine(clientId));
     }
 
-    private IEnumerator RespawnCoroutine(ulong clientId)
+   private IEnumerator RespawnCoroutine(ulong clientId)
     {
         while (!mapManager.CanSpawn())
             yield return null;
 
-        Transform spawnPoint = mapManager.GetActiveLaunchPoint();
+        Transform spawnPoint = mapManager.GetSpawnPoint();
 
         var player = NetworkManager.Singleton.ConnectedClients[clientId].PlayerObject;
 
