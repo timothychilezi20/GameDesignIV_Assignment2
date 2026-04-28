@@ -13,8 +13,8 @@ GameObject:
   - component: {fileID: 946050152232694497}
   - component: {fileID: 7425973642367838259}
   - component: {fileID: 7910303908294210461}
-  - component: {fileID: 7062847016877922227}
   - component: {fileID: 2496945600144764761}
+  - component: {fileID: 7062847016877922227}
   m_Layer: 0
   m_Name: Offbutton
   m_TagString: Untagged
@@ -142,21 +142,6 @@ Rigidbody:
   m_Interpolate: 0
   m_Constraints: 126
   m_CollisionDetection: 0
---- !u!114 &7062847016877922227
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 7785098266638720385}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 8a3fcdd10b969ac43ac85ac03a8faed3, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::LaserDisableTrap
-  disableDuration: 5
-  flashStartTime: 2
-  flashSpeed: 8
 --- !u!114 &2496945600144764761
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -169,7 +154,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d5a57f767e5e46a458fc5d3c628d0cbb, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Unity.Netcode.Runtime::Unity.Netcode.NetworkObject
-  GlobalObjectIdHash: 2793666774
+  GlobalObjectIdHash: 2349261061
   InScenePlacedSourceGlobalObjectIdHash: 0
   DeferredDespawnTick: 0
   Ownership: 8
@@ -182,3 +167,19 @@ MonoBehaviour:
   AutoObjectParentSync: 1
   SyncOwnerTransformWhenParented: 1
   AllowOwnerToParent: 0
+--- !u!114 &7062847016877922227
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 7785098266638720385}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 8a3fcdd10b969ac43ac85ac03a8faed3, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::LaserDisableTrap
+  ShowTopMostFoldoutHeaderGroup: 1
+  disableDuration: 5
+  flashStartTime: 2
+  flashSpeed: 8

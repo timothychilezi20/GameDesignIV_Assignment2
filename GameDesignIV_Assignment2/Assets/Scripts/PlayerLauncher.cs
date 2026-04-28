@@ -2,194 +2,248 @@
 using Unity.Netcode;
 using UnityEngine.InputSystem;
 using TMPro;
+using System.Collections;
 
-[RequireComponent(typeof(CharacterController))]
-[RequireComponent(typeof(PlayerInput))]
 public class PlayerLauncher : NetworkBehaviour
 {
-    [Header("Physics")]
-    public float gravity = -25f;
+    // ─────────────────────────────────────────────
+    // LAUNCH SETTINGS
+    // ─────────────────────────────────────────────
 
     [Header("Launch Settings")]
-    public float launchForce = 120f;
-    public float upwardBoost = 20f;
-    public float launchDamping = 3f;
+    public float launchForce = 200f;
+    public float controlRestoreSpeed = 1.5f;
+    public float controlRestoreDelay = 0.5f;
 
-    private Vector3 velocity;
-    private Vector3 launchVelocity;
+    // ─────────────────────────────────────────────
+    // UI + AUDIO
+    // ─────────────────────────────────────────────
 
-    private CharacterController controller;
-    private PlayerInput playerInput;
-
-    private InputAction launchAction;
-    private InputAction pauseAction;
-
-    private PauseMenu pauseMenu;
-
+    [Header("Countdown UI")]
     [SerializeField] private TMP_Text countdownText;
 
-    private float countdownValue;
-    private bool isCountingDown;
+    [Header("Countdown Audio")]
+    [SerializeField] private AudioSource audioSource;
+    [SerializeField] private AudioClip countdownClip;
 
-    private bool hasStartedMatch = false;
-    private bool canMove = false;
+    // ─────────────────────────────────────────────
+    // STATE
+    // ─────────────────────────────────────────────
+
+    private PlayerController _playerController;
+    private Rigidbody _rb;
+    private PlayerInput _playerInput;
+    private PauseMenu _pauseMenu;
+
+    private InputAction _pauseAction;
+
+    private float _countdownValue;
+    private bool _isCountingDown;
+    private bool _hasLaunched;
+    private float _timeSinceLaunch;
+
+    // ─────────────────────────────────────────────
+    // INIT
+    // ─────────────────────────────────────────────
 
     private void Awake()
     {
-        controller = GetComponent<CharacterController>();
-        playerInput = GetComponent<PlayerInput>();
+        _playerController = GetComponent<PlayerController>();
+        _rb = GetComponent<Rigidbody>();
+        _playerInput = GetComponent<PlayerInput>();
     }
 
     public override void OnNetworkSpawn()
     {
         if (!IsOwner) return;
 
-        launchAction = playerInput.actions["LaunchCountdown"];
-        launchAction.Enable();
-        launchAction.performed += OnLaunchPressed;
+        _pauseAction = _playerInput.actions["Pause"];
+        _pauseAction.Enable();
+        _pauseAction.performed += OnPausePressed;
 
-        if (countdownText != null)
-            countdownText.gameObject.SetActive(false);
+        _pauseMenu = FindAnyObjectByType<PauseMenu>();
 
-        pauseAction = playerInput.actions["Pause"];
-        pauseAction.Enable();
-        pauseAction.performed += OnPausePressed; 
-
-        pauseMenu = FindAnyObjectByType<PauseMenu>();
+        ResetCountdownUI();
     }
 
     public override void OnNetworkDespawn()
     {
-        if (launchAction != null)
+        if (_pauseAction != null)
         {
-            launchAction.performed -= OnLaunchPressed;
-            launchAction.Disable();
-        }
-
-        if (pauseAction != null)
-        {
-            pauseAction.performed -= OnPausePressed;
-            pauseAction.Disable();
+            _pauseAction.performed -= OnPausePressed;
+            _pauseAction.Disable();
         }
     }
 
-    private void OnPausePressed(InputAction.CallbackContext context)
+    private void Start()
     {
-        if (!IsOwner)
+        ResetCountdownUI();
+    }
+
+    // ─────────────────────────────────────────────
+    // UI RESET + AUDIO STOP
+    // ─────────────────────────────────────────────
+
+    private void ResetCountdownUI()
+    {
+        if (countdownText != null)
         {
-            return;
+            countdownText.text = "";
+            countdownText.gameObject.SetActive(false);
         }
 
-        pauseMenu?.TogglePause();
+        StopCountdownAudio();
     }
 
-    // ---------------- INPUT ----------------
-    private void OnLaunchPressed(InputAction.CallbackContext context)
+    private void StopCountdownAudio()
     {
-        if (hasStartedMatch) return;
-
-        StartCountdown(3f);
+        if (audioSource != null)
+        {
+            audioSource.Stop();
+            audioSource.loop = false;
+            audioSource.clip = null;
+        }
     }
 
-    // ---------------- UPDATE ----------------
+    // ─────────────────────────────────────────────
+    // PAUSE
+    // ─────────────────────────────────────────────
+
+    private void OnPausePressed(InputAction.CallbackContext ctx)
+    {
+        if (!IsOwner) return;
+        _pauseMenu?.TogglePause();
+    }
+
+    // ─────────────────────────────────────────────
+    // UPDATE
+    // ─────────────────────────────────────────────
+
     private void Update()
     {
         if (!IsOwner) return;
 
         HandleCountdown();
-        ApplyMovement();
+
+        if (_hasLaunched)
+            CheckRestoreControl();
     }
 
-    // ---------------- MOVEMENT ----------------
-    private void ApplyMovement()
+    // ─────────────────────────────────────────────
+    // START COUNTDOWN
+    // ─────────────────────────────────────────────
+
+    public void StartCountdown(float duration)
     {
-        if (!canMove || (pauseMenu != null && pauseMenu.IsPaused))
-            return;
+        if (_isCountingDown || _hasLaunched) return;
 
-        if (controller.isGrounded && velocity.y < 0)
-            velocity.y = -2f;
-
-        velocity.y += gravity * Time.deltaTime;
-
-        if (launchVelocity.magnitude > 0.1f)
-        {
-            controller.Move(launchVelocity * Time.deltaTime);
-
-            launchVelocity = Vector3.Lerp(
-                launchVelocity,
-                Vector3.zero,
-                launchDamping * Time.deltaTime
-            );
-        }
-
-        controller.Move(velocity * Time.deltaTime);
-    }
-
-    // ---------------- COUNTDOWN ----------------
-    public void StartCountdown(float time)
-    {
-        if (hasStartedMatch) return;
-
-        hasStartedMatch = true;
-        canMove = false;
-
-        countdownValue = time;
-        isCountingDown = true;
+        _countdownValue = duration;
+        _isCountingDown = true;
 
         if (countdownText != null)
         {
             countdownText.gameObject.SetActive(true);
-            countdownText.text = Mathf.Ceil(time).ToString();
+            countdownText.text = Mathf.Ceil(_countdownValue).ToString();
+        }
+
+        _playerController.SetMovementLocked(true);
+
+        // ▶ Start looping countdown audio
+        if (audioSource != null && countdownClip != null)
+        {
+            audioSource.clip = countdownClip;
+            audioSource.loop = true;
+            audioSource.Play();
         }
     }
+
+    // ─────────────────────────────────────────────
+    // COUNTDOWN LOGIC
+    // ─────────────────────────────────────────────
 
     private void HandleCountdown()
     {
-        if (!isCountingDown) return;
+        if (!_isCountingDown) return;
 
-        countdownValue -= Time.deltaTime;
+        _countdownValue -= Time.deltaTime;
 
         if (countdownText != null)
-            countdownText.text = Mathf.Ceil(countdownValue).ToString();
+            countdownText.text = Mathf.Ceil(Mathf.Max(_countdownValue, 0f)).ToString();
 
-        if (countdownValue <= 0f)
+        if (_countdownValue <= 0f)
         {
-            isCountingDown = false;
+            _isCountingDown = false;
 
-            if (countdownText != null)
-                countdownText.gameObject.SetActive(false);
-
-            canMove = true;
-
-            TriggerLaunch();
+            StartCoroutine(ShowGoThenLaunch());
         }
     }
 
-    // ---------------- LAUNCH ----------------
-    private void TriggerLaunch()
+    private IEnumerator ShowGoThenLaunch()
     {
-        launchVelocity = transform.forward * launchForce;
-        launchVelocity.y += upwardBoost;
+        if (countdownText != null)
+        {
+            countdownText.gameObject.SetActive(true);
+            countdownText.text = "GO!";
+        }
+
+        // optional small delay so player sees it
+        yield return new WaitForSeconds(0.3f);
+
+        ResetCountdownUI();
+        FireLaunch();
     }
 
-    // ---------------- RESET ----------------
-    public void ResetVelocity()
+    // ─────────────────────────────────────────────
+    // LAUNCH
+    // ─────────────────────────────────────────────
+
+    private void FireLaunch()
     {
-        velocity = Vector3.zero;
-        launchVelocity = Vector3.zero;
+        Vector3 direction = _playerController.GetLaunchDirection();
+
+        direction.y = 0f;
+        direction.Normalize();
+
+        _hasLaunched = true;
+        _timeSinceLaunch = 0f;
+
+        _playerController.ExecuteLaunch(direction, launchForce);
+
+        Debug.Log($"[PlayerLauncher] Launch fired: {direction}");
     }
+
+    // ─────────────────────────────────────────────
+    // CONTROL RESTORE
+    // ─────────────────────────────────────────────
+
+    private void CheckRestoreControl()
+    {
+        _timeSinceLaunch += Time.deltaTime;
+
+        if (_timeSinceLaunch < controlRestoreDelay) return;
+
+        if (_rb.linearVelocity.magnitude <= controlRestoreSpeed)
+        {
+            _hasLaunched = false;
+            _playerController.SetMovementLocked(false);
+
+            Debug.Log("[PlayerLauncher] Control restored");
+        }
+    }
+
+    // ─────────────────────────────────────────────
+    // RESET MATCH STATE
+    // ─────────────────────────────────────────────
 
     public void ResetMatchState()
     {
-        hasStartedMatch = false;
-        canMove = false;
+        _isCountingDown = false;
+        _hasLaunched = false;
+        _timeSinceLaunch = 0f;
+        _countdownValue = 0f;
 
-        countdownValue = 0f;
-        isCountingDown = false;
+        ResetCountdownUI();
 
-        if (countdownText != null)
-            countdownText.gameObject.SetActive(false);
-
-        ResetVelocity();
+        _playerController.SetMovementLocked(true);
     }
 }
