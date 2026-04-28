@@ -12,7 +12,6 @@ public class PlayerLauncher : NetworkBehaviour
 
     [Header("Launch Settings")]
     public float launchForce = 120f;
-    public float upwardBoost = 20f;
     public float launchDamping = 3f;
 
     private Vector3 velocity;
@@ -32,7 +31,7 @@ public class PlayerLauncher : NetworkBehaviour
     private bool isCountingDown;
 
     private bool hasStartedMatch = false;
-    private bool canMove = false;
+    public bool canMove = false;
 
     private void Awake()
     {
@@ -53,7 +52,7 @@ public class PlayerLauncher : NetworkBehaviour
 
         pauseAction = playerInput.actions["Pause"];
         pauseAction.Enable();
-        pauseAction.performed += OnPausePressed; 
+        pauseAction.performed += OnPausePressed;
 
         pauseMenu = FindAnyObjectByType<PauseMenu>();
     }
@@ -75,23 +74,16 @@ public class PlayerLauncher : NetworkBehaviour
 
     private void OnPausePressed(InputAction.CallbackContext context)
     {
-        if (!IsOwner)
-        {
-            return;
-        }
-
+        if (!IsOwner) return;
         pauseMenu?.TogglePause();
     }
 
-    // ---------------- INPUT ----------------
     private void OnLaunchPressed(InputAction.CallbackContext context)
     {
         if (hasStartedMatch) return;
-
         StartCountdown(3f);
     }
 
-    // ---------------- UPDATE ----------------
     private void Update()
     {
         if (!IsOwner) return;
@@ -100,7 +92,9 @@ public class PlayerLauncher : NetworkBehaviour
         ApplyMovement();
     }
 
-    // ---------------- MOVEMENT ----------------
+    // -------------------------------------------------------
+    // Movement — gravity and launch velocity only (owns Y axis)
+    // -------------------------------------------------------
     private void ApplyMovement()
     {
         if (!canMove || (pauseMenu != null && pauseMenu.IsPaused))
@@ -125,7 +119,9 @@ public class PlayerLauncher : NetworkBehaviour
         controller.Move(velocity * Time.deltaTime);
     }
 
-    // ---------------- COUNTDOWN ----------------
+    // -------------------------------------------------------
+    // Countdown
+    // -------------------------------------------------------
     public void StartCountdown(float time)
     {
         if (hasStartedMatch) return;
@@ -160,19 +156,21 @@ public class PlayerLauncher : NetworkBehaviour
                 countdownText.gameObject.SetActive(false);
 
             canMove = true;
-
             TriggerLaunch();
         }
     }
 
-    // ---------------- LAUNCH ----------------
-    private void TriggerLaunch()
+    // -------------------------------------------------------
+    // Launch — forward only, no upward boost
+    // -------------------------------------------------------
+    public void TriggerLaunch()
     {
         launchVelocity = transform.forward * launchForce;
-        launchVelocity.y += upwardBoost;
     }
 
-    // ---------------- RESET ----------------
+    // -------------------------------------------------------
+    // Reset
+    // -------------------------------------------------------
     public void ResetVelocity()
     {
         velocity = Vector3.zero;

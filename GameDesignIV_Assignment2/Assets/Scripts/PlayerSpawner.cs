@@ -9,11 +9,10 @@ public class PlayerSpawnManager : NetworkBehaviour
     [SerializeField] private Transform spawnPoint1;
     [SerializeField] private Transform spawnPoint2;
 
-    [Header("Launch Settings")]
-    [SerializeField] private float launchForce = 15f;
-    [SerializeField] private float launchDelay = 1f; // pause before launch after both ready
+    [Header("Countdown")]
+    [SerializeField] private float countdownDuration = 3f;
+    [SerializeField] private float launchDelay = 1f; // pause before countdown starts
 
-    // Track which clients are ready
     private bool _player1Ready = false;
     private bool _player2Ready = false;
     private ulong _client1Id;
@@ -38,19 +37,16 @@ public class PlayerSpawnManager : NetworkBehaviour
     private void OnClientConnected(ulong clientId)
     {
         if (clientId == NetworkManager.Singleton.LocalClientId) return;
-
         _client2Id = clientId;
         StartCoroutine(TeleportWhenReady(clientId, spawnPoint2, isPlayer1: false));
     }
 
     private IEnumerator TeleportWhenReady(ulong clientId, Transform spawnPoint, bool isPlayer1)
     {
-        // Wait until player object exists
         NetworkClient client = null;
-        float timeout = 5f;
         float elapsed = 0f;
 
-        while (elapsed < timeout)
+        while (elapsed < 5f)
         {
             if (NetworkManager.Singleton.ConnectedClients.TryGetValue(clientId, out client)
                 && client.PlayerObject != null)
@@ -62,36 +58,41 @@ public class PlayerSpawnManager : NetworkBehaviour
 
         if (client?.PlayerObject == null)
         {
-            Debug.LogError($"Timed out waiting for player {clientId}");
+            Debug.LogError($"[SpawnManager] Timed out waiting for player {clientId}");
             yield break;
         }
 
         if (spawnPoint == null)
         {
-            Debug.LogError($"Spawn point null for client {clientId}");
+            Debug.LogError($"[SpawnManager] Spawn point null for client {clientId}");
             yield break;
         }
 
-        // Teleport into position and lock them there until launch
-        TeleportClientRpc(clientId, spawnPoint.position, spawnPoint.rotation);
+        // Register with MapManager so player rides map switches
+        if (MapManager.Instance != null)
+            MapManager.Instance.RegisterPlayer(client.PlayerObject.transform);
+
+        // Place on server
         client.PlayerObject.transform.SetPositionAndRotation(spawnPoint.position, spawnPoint.rotation);
 
-        // Mark this player as ready
+        // Place and lock on owning client
+        TeleportClientRpc(clientId, spawnPoint.position, spawnPoint.rotation);
+
         if (isPlayer1) _player1Ready = true;
         else _player2Ready = true;
 
-        // Once both are in position, launch both
+        // Once both are placed, start countdown on both
         if (_player1Ready && _player2Ready)
-            StartCoroutine(LaunchBothPlayers());
+            StartCoroutine(BeginCountdowns());
     }
 
-    private IEnumerator LaunchBothPlayers()
+    private IEnumerator BeginCountdowns()
     {
-        // Brief hold so players can see each other before launching
+        // Brief pause so both players are settled before the countdown appears
         yield return new WaitForSeconds(launchDelay);
 
-        LaunchPlayerClientRpc(_client1Id, spawnPoint1.forward);
-        LaunchPlayerClientRpc(_client2Id, spawnPoint2.forward);
+        StartCountdownClientRpc(_client1Id, countdownDuration);
+        StartCountdownClientRpc(_client2Id, countdownDuration);
     }
 
     // ── ClientRpcs ────────────────────────────────────────────────────────────
@@ -103,6 +104,9 @@ public class PlayerSpawnManager : NetworkBehaviour
 
         PlayerController player = GetLocalPlayer(clientId);
         if (player == null) return;
+
+        // Lock movement and zero physics before placing
+        player.SetMovementLocked(true);
 
         Rigidbody rb = player.GetComponent<Rigidbody>();
         if (rb != null)
@@ -121,14 +125,19 @@ public class PlayerSpawnManager : NetworkBehaviour
     }
 
     [ClientRpc]
-    private void LaunchPlayerClientRpc(ulong clientId, Vector3 launchDirection)
+    private void StartCountdownClientRpc(ulong clientId, float duration)
     {
         if (NetworkManager.Singleton.LocalClientId != clientId) return;
 
         PlayerController player = GetLocalPlayer(clientId);
         if (player == null) return;
 
-        player.Launch(launchDirection, launchForce);
+        // PlayerLauncher drives the countdown and calls ExecuteLaunch when done
+        PlayerLauncher launcher = player.GetComponent<PlayerLauncher>();
+        if (launcher != null)
+            launcher.StartCountdown(duration);
+        else
+            Debug.LogWarning($"[SpawnManager] No PlayerLauncher on player {clientId} — launching directly.");
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
@@ -136,11 +145,10 @@ public class PlayerSpawnManager : NetworkBehaviour
     private PlayerController GetLocalPlayer(ulong clientId)
     {
         foreach (PlayerController pc in FindObjectsByType<PlayerController>(FindObjectsSortMode.None))
-        {
             if (pc.OwnerClientId == clientId)
                 return pc;
-        }
-        Debug.LogWarning($"Could not find PlayerController for client {clientId}");
+
+        Debug.LogWarning($"[SpawnManager] Could not find PlayerController for client {clientId}");
         return null;
     }
 }
