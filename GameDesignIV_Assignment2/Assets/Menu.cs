@@ -2,6 +2,7 @@
 using Unity.Netcode;
 using Unity.Netcode.Transports.UTP;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 public class Menu : MonoBehaviour
 {
@@ -10,9 +11,8 @@ public class Menu : MonoBehaviour
     [SerializeField] private TMP_InputField portInput;
 
     [Header("Defaults")]
-    [SerializeField] private string defaultIP = "127.0.0.1";
+    [SerializeField] private string defaultIP = "10.196.166.103";
     [SerializeField] private ushort defaultPort = 7777;
-
     [SerializeField] private UnityTransport transport;
     [SerializeField] private NetworkManager networkManager;
 
@@ -26,40 +26,31 @@ public class Menu : MonoBehaviour
     {
         if (ipInput) ipInput.text = defaultIP;
         if (portInput) portInput.text = defaultPort.ToString();
-
         if (buttonSfx != null)
-        {
             DontDestroyOnLoad(buttonSfx.gameObject);
-        }
     }
 
     public void StartHost()
     {
         PlayButtonSound();
-
         ushort port = GetPort();
         transport.SetConnectionData("0.0.0.0", port);
-
         networkManager.StartHost();
-        networkManager.SceneManager.LoadScene(gameSceneName, UnityEngine.SceneManagement.LoadSceneMode.Single);
+        networkManager.SceneManager.LoadScene(gameSceneName, LoadSceneMode.Single);
     }
 
     public void JoinGame()
     {
         PlayButtonSound();
-
         string ip = GetIP();
         ushort port = GetPort();
-
         transport.SetConnectionData(ip, port);
         networkManager.StartClient();
-
     }
 
     public void StartServerOnly()
     {
         PlayButtonSound();
-
         ushort port = GetPort();
         transport.SetConnectionData("0.0.0.0", port);
         networkManager.StartServer();
@@ -68,18 +59,13 @@ public class Menu : MonoBehaviour
     private void PlayButtonSound()
     {
         if (buttonSfx != null)
-        {
             buttonSfx.Play();
-            Debug.Log("Button SFX AudioSource!");
-
-        }
     }
 
     private string GetIP()
     {
         if (!ipInput || string.IsNullOrWhiteSpace(ipInput.text))
             return defaultIP;
-
         return ipInput.text.Trim();
     }
 
@@ -87,7 +73,6 @@ public class Menu : MonoBehaviour
     {
         if (!portInput || !ushort.TryParse(portInput.text, out ushort port))
             return defaultPort;
-
         return port;
     }
 }
