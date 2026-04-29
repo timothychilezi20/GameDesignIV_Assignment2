@@ -1,5 +1,6 @@
 using UnityEngine;
 using Unity.Netcode;
+using Unity.Multiplayer.Center.NetcodeForGameObjectsExample.DistributedAuthority;
 
 public class ScoreManager : NetworkBehaviour
 {
@@ -11,13 +12,11 @@ public class ScoreManager : NetworkBehaviour
     private NetworkVariable<int> scorePlayer2 = new NetworkVariable<int>(
         0, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
 
+    [SerializeField] private int scoreToWin = 10;
+
     void Awake()
     {
-        if (Instance != null && Instance != this)
-        {
-            Destroy(gameObject);
-            return;
-        }
+        if (Instance != null && Instance != this) { Destroy(gameObject); return; }
         Instance = this;
     }
 
@@ -36,13 +35,18 @@ public class ScoreManager : NetworkBehaviour
     private void OnScoreChanged()
     {
         Debug.Log($"Player 1: {scorePlayer1.Value} | Player 2: {scorePlayer2.Value}");
-        // Hook your UI update here e.g. UpdateScoreUI()
+
+        if (scorePlayer1.Value >= scoreToWin)
+            GameManager.Instance?.EndGame(1);
+        else if (scorePlayer2.Value >= scoreToWin)
+            GameManager.Instance?.EndGame(2);
+
+        UIManager.Instance?.UpdateScoreUI(scorePlayer1.Value, scorePlayer2.Value);
     }
 
     public void AddScore(int player, int amount)
     {
         if (!IsServer) return;
-
         if (player == 1) scorePlayer1.Value += amount;
         else if (player == 2) scorePlayer2.Value += amount;
     }

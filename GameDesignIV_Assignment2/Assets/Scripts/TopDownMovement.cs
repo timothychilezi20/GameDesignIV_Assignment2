@@ -75,6 +75,16 @@ public class PlayerController : NetworkBehaviour
 
     public bool IsInvincible => isInvincibleNet.Value;
 
+
+    [Header("Health")]
+    [SerializeField] private int maxHealth = 3;
+
+    private NetworkVariable<int> healthNet = new NetworkVariable<int>(
+        3, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
+
+    public int Health => healthNet.Value;
+
+
     // =========================================================================
     // Init
     // =========================================================================
@@ -90,6 +100,12 @@ public class PlayerController : NetworkBehaviour
     public override void OnNetworkSpawn()
     {
         playerNumber = OwnerClientId == 0 ? 1 : 2;
+
+        healthNet.OnValueChanged += (oldVal, newVal) =>
+        {
+            Debug.Log($"Player {playerNumber} health changed to {newVal}");
+            // Hook UIManager health display here if you add one
+        };
 
         if (IsOwner)
             StartCoroutine(InitOwner());
@@ -373,7 +389,11 @@ public class PlayerController : NetworkBehaviour
     public void ResetSpeedMultiplier() => speedMultiplier = 1f;
 
     public void ApplyStun(float stunDuration, float invincibleDuration)
-        => ApplyStunClientRpc(stunDuration, invincibleDuration);
+    {
+        // Damage is authoritative on server
+        TakeDamage(1);
+        ApplyStunClientRpc(stunDuration, invincibleDuration);
+    }
 
     [ClientRpc]
     private void ApplyStunClientRpc(float stunDuration, float invincibleDuration)
@@ -396,6 +416,22 @@ public class PlayerController : NetworkBehaviour
         isInvincibleNet.Value = false;
     }
 
+
+
+    public void TakeDamage(int amount)
+    {
+        if (!IsServer) return;
+        healthNet.Value = Mathf.Max(0, healthNet.Value - amount);
+
+        Debug.Log($"[PlayerController] Player {playerNumber} health: {healthNet.Value}");
+
+        if (healthNet.Value <= 0)
+        {
+            // The other player wins
+            int winningPlayer = playerNumber == 1 ? 2 : 1;
+            GameManager.Instance?.EndGame(winningPlayer);
+        }
+    }
     // =========================================================================
     // Accessors
     // =========================================================================
