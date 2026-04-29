@@ -3,15 +3,6 @@ using UnityEngine;
 using UnityEngine.InputSystem;
 using Unity.Netcode;
 
-/// <summary>
-/// PlayerController — all movement and rotation driven exclusively through Rigidbody.
-///
-/// Movement:  rb.linearVelocity  (grounded = surface-projected, airborne = reduced)
-/// Rotation:  rb.MoveRotation    (faces mouse cursor each FixedUpdate)
-/// Launch:    rb.AddForce        (impulse, then physics takes over until speed drops)
-///
-/// Transform.position and Transform.rotation are NEVER written directly.
-/// </summary>
 [RequireComponent(typeof(Rigidbody))]
 public class PlayerController : NetworkBehaviour
 {
@@ -32,7 +23,29 @@ public class PlayerController : NetworkBehaviour
     [SerializeField] private LineRenderer laserLineRenderer;
 
     [Header("Launch")]
-    [SerializeField] private float launchSpeedThreshold = 3f;
+    [SerializeField] private float launchSpeedThreshold = 0.5f;
+
+    // =========================================================================
+    // Constraint presets
+    // =========================================================================
+
+    // Fully locked at spawn
+    private static readonly RigidbodyConstraints kFrozenAll =
+        RigidbodyConstraints.FreezeAll;
+
+    // Normal movement — Y frozen, rotation axes frozen
+    private static readonly RigidbodyConstraints kActiveMove =
+        RigidbodyConstraints.FreezePositionY
+        | RigidbodyConstraints.FreezeRotationX
+        | RigidbodyConstraints.FreezeRotationY
+        | RigidbodyConstraints.FreezeRotationZ;
+
+    // Pinball bounce — rotation frozen but Y position FREE so bounce
+    // normals with vertical components don't get absorbed by the constraint
+    private static readonly RigidbodyConstraints kPinball =
+        RigidbodyConstraints.FreezeRotationX
+        | RigidbodyConstraints.FreezeRotationY
+        | RigidbodyConstraints.FreezeRotationZ;
 
     // =========================================================================
     // Private state
@@ -45,6 +58,7 @@ public class PlayerController : NetworkBehaviour
     private Vector2 lookInput;
 
     private bool _isLaunching = false;
+    private bool _pinballActive = false;
     private bool _launched = false;
     private bool _movementLocked = true;
     private bool isStunned = false;
@@ -68,9 +82,9 @@ public class PlayerController : NetworkBehaviour
     void Awake()
     {
         rb = GetComponent<Rigidbody>();
-        rb.freezeRotation = true;   // we control rotation via rb.MoveRotation
+        rb.freezeRotation = true;
         rb.useGravity = false;
-        rb.constraints = RigidbodyConstraints.FreezeAll;
+        rb.constraints = kFrozenAll;
     }
 
     public override void OnNetworkSpawn()
@@ -88,7 +102,7 @@ public class PlayerController : NetworkBehaviour
 
     private IEnumerator InitOwner()
     {
-        yield return null; // let PlayerCamera.OnNetworkSpawn run first
+        yield return null;
 
         PlayerCamera playerCam = GetComponent<PlayerCamera>();
         if (playerCam != null)
@@ -105,7 +119,7 @@ public class PlayerController : NetworkBehaviour
         Cursor.visible = false;
         Cursor.lockState = CursorLockMode.Confined;
 
-        yield return null; // second frame — LaserManager is ready
+        yield return null;
 
         if (LaserManager.Instance == null) { Debug.LogError("LaserManager null"); yield break; }
         RegisterWithLaserManagerServerRpc(playerNumber);
@@ -119,16 +133,13 @@ public class PlayerController : NetworkBehaviour
     }
 
     // =========================================================================
-    // Update — input reads only, no physics writes here
+    // Update
     // =========================================================================
 
-    void Update()
-    {
-        // Nothing physics-related in Update — all rb writes happen in FixedUpdate
-    }
+    void Update() { }
 
     // =========================================================================
-    // FixedUpdate — single place where ALL rb writes happen
+    // FixedUpdate
     // =========================================================================
 
     void FixedUpdate()
@@ -137,6 +148,9 @@ public class PlayerController : NetworkBehaviour
 
         CheckGround();
         RotateTowardMouse();
+
+        // Pinball bounce is active — let physics handle everything
+        if (_pinballActive) return;
 
         if (_isLaunching)
         {
@@ -148,7 +162,7 @@ public class PlayerController : NetworkBehaviour
                 _isLaunching = false;
                 Debug.Log("[PlayerController] Launch complete — resuming normal movement.");
             }
-            return; // physics controls movement during launch
+            return;
         }
 
         ApplyMovement();
@@ -176,33 +190,31 @@ public class PlayerController : NetworkBehaviour
     }
 
     // =========================================================================
-    // Movement — rb.linearVelocity only
+    // Movement
     // =========================================================================
 
     private void ApplyMovement()
     {
         if (!_isGrounded)
         {
-            // Reduced air control
             rb.linearVelocity = new Vector3(
                 moveInput.x * moveSpeed * speedMultiplier * 0.3f,
-                rb.linearVelocity.y,
+                0f,
                 moveInput.z * moveSpeed * speedMultiplier * 0.3f
             );
             return;
         }
 
-        // Project movement onto the surface so the player walks flush with tilted maps
         Vector3 right = Vector3.ProjectOnPlane(Vector3.right, _surfaceNormal).normalized;
         Vector3 forward = Vector3.ProjectOnPlane(Vector3.forward, _surfaceNormal).normalized;
         Vector3 move = (right * moveInput.x + forward * moveInput.z)
                           * moveSpeed * speedMultiplier;
 
-        rb.linearVelocity = new Vector3(move.x, rb.linearVelocity.y, move.z);
+        rb.linearVelocity = new Vector3(move.x, 0f, move.z);
     }
 
     // =========================================================================
-    // Rotation — rb.MoveRotation only
+    // Rotation
     // =========================================================================
 
     private void RotateTowardMouse()
@@ -221,7 +233,6 @@ public class PlayerController : NetworkBehaviour
         if (direction.sqrMagnitude < 0.001f) return;
 
         Quaternion targetRot = Quaternion.LookRotation(direction);
-
         Quaternion newRot = rotationSpeed <= 0f
             ? targetRot
             : Quaternion.Slerp(rb.rotation, targetRot, Time.fixedDeltaTime * rotationSpeed);
@@ -230,7 +241,7 @@ public class PlayerController : NetworkBehaviour
     }
 
     // =========================================================================
-    // Input callbacks
+    // Input
     // =========================================================================
 
     void OnMove(InputValue value)
@@ -255,38 +266,57 @@ public class PlayerController : NetworkBehaviour
         _launched = true;
         _isLaunching = true;
         _movementLocked = false;
-        rb.useGravity = true;
+        rb.useGravity = false;
 
-        rb.constraints = RigidbodyConstraints.FreezeRotationX
-                       | RigidbodyConstraints.FreezeRotationY
-                       | RigidbodyConstraints.FreezeRotationZ;
+        // Use kPinball constraints during launch so bounce normals
+        // with any vertical component aren't absorbed by FreezePositionY
+        rb.constraints = kPinball;
 
         rb.linearVelocity = Vector3.zero;
         rb.angularVelocity = Vector3.zero;
-        rb.AddForce(direction.normalized * force, ForceMode.Impulse);
 
-        Debug.Log($"[PlayerController] Launched — direction:{direction} force:{force}");
+        Vector3 flatDir = new Vector3(direction.x, 0f, direction.z).normalized;
+        rb.AddForce(flatDir * force, ForceMode.Impulse);
+
+        Debug.Log($"[PlayerController] Launched — direction:{flatDir} force:{force}");
     }
 
     public void SetLaunchDirection(Vector3 direction) => _launchDirection = direction.normalized;
     public Vector3 GetLaunchDirection() => _launchDirection;
 
+    // Called by PinballBounce on collision enter/exit
+    public void SetPinballActive(bool active)
+    {
+        _pinballActive = active;
+
+        if (active)
+        {
+            // Free Y during bounce so reflected velocity isn't clipped
+            rb.constraints = kPinball;
+        }
+        else if (!_isLaunching && !_movementLocked)
+        {
+            // Return to normal movement constraints once bounce ends
+            rb.constraints = kActiveMove;
+        }
+    }
+
     public void SetMovementLocked(bool locked)
     {
         _movementLocked = locked;
+        _pinballActive = false;
 
         if (locked)
         {
             rb.linearVelocity = Vector3.zero;
             rb.angularVelocity = Vector3.zero;
             rb.useGravity = false;
-            rb.constraints = RigidbodyConstraints.FreezeAll;
+            rb.constraints = kFrozenAll;
         }
         else
         {
-            rb.constraints = RigidbodyConstraints.FreezeRotationX
-                           | RigidbodyConstraints.FreezeRotationY
-                           | RigidbodyConstraints.FreezeRotationZ;
+            rb.useGravity = false;
+            rb.constraints = kActiveMove;
         }
     }
 
@@ -301,7 +331,7 @@ public class PlayerController : NetworkBehaviour
     }
 
     // =========================================================================
-    // Spawn placement — uses rb.position + rb.rotation, never Transform
+    // Spawn placement
     // =========================================================================
 
     public void PlaceAtSpawnPoint(Vector3 position, Quaternion rotation)
@@ -309,14 +339,14 @@ public class PlayerController : NetworkBehaviour
         _launchDirection = rotation * Vector3.forward;
         _launched = false;
         _isLaunching = false;
+        _pinballActive = false;
         _movementLocked = true;
 
         rb.useGravity = false;
         rb.linearVelocity = Vector3.zero;
         rb.angularVelocity = Vector3.zero;
-        rb.constraints = RigidbodyConstraints.FreezeAll;
+        rb.constraints = kFrozenAll;
 
-        // Raycast down from above the spawn point to land cleanly on the surface
         Vector3 correctedPos = position;
         Vector3 rayOrigin = position + Vector3.up * 2f;
 
@@ -331,7 +361,6 @@ public class PlayerController : NetworkBehaviour
             Debug.LogWarning("[PlayerController] No surface under spawn point — using offset.");
         }
 
-        // Use rb.position and rb.rotation — no Transform writes
         rb.position = correctedPos;
         rb.rotation = rotation;
     }

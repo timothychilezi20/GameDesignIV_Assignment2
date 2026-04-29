@@ -12,8 +12,8 @@ public class PlayerLauncher : NetworkBehaviour
 
     [Header("Launch Settings")]
     public float launchForce = 200f;
-    public float controlRestoreSpeed = 1.5f;
-    public float controlRestoreDelay = 0.5f;
+    public float controlRestoreSpeed = 0.3f;
+    public float controlRestoreDelay = 2f;
 
     // ─────────────────────────────────────────────
     // UI + AUDIO
@@ -75,10 +75,7 @@ public class PlayerLauncher : NetworkBehaviour
         }
     }
 
-    private void Start()
-    {
-        ResetCountdownUI();
-    }
+    private void Start() => ResetCountdownUI();
 
     // ─────────────────────────────────────────────
     // UI RESET + AUDIO STOP
@@ -91,7 +88,6 @@ public class PlayerLauncher : NetworkBehaviour
             countdownText.text = "";
             countdownText.gameObject.SetActive(false);
         }
-
         StopCountdownAudio();
     }
 
@@ -122,9 +118,7 @@ public class PlayerLauncher : NetworkBehaviour
     private void Update()
     {
         if (!IsOwner) return;
-
         HandleCountdown();
-
         if (_hasLaunched)
             CheckRestoreControl();
     }
@@ -148,7 +142,6 @@ public class PlayerLauncher : NetworkBehaviour
 
         _playerController.SetMovementLocked(true);
 
-        // ▶ Start looping countdown audio
         if (audioSource != null && countdownClip != null)
         {
             audioSource.clip = countdownClip;
@@ -173,7 +166,6 @@ public class PlayerLauncher : NetworkBehaviour
         if (_countdownValue <= 0f)
         {
             _isCountingDown = false;
-
             StartCoroutine(ShowGoThenLaunch());
         }
     }
@@ -186,7 +178,6 @@ public class PlayerLauncher : NetworkBehaviour
             countdownText.text = "GO!";
         }
 
-        // optional small delay so player sees it
         yield return new WaitForSeconds(0.3f);
 
         ResetCountdownUI();
@@ -200,7 +191,6 @@ public class PlayerLauncher : NetworkBehaviour
     private void FireLaunch()
     {
         Vector3 direction = _playerController.GetLaunchDirection();
-
         direction.y = 0f;
         direction.Normalize();
 
@@ -209,6 +199,9 @@ public class PlayerLauncher : NetworkBehaviour
 
         _playerController.ExecuteLaunch(direction, launchForce);
 
+        // Tell server this player is now mid-launch so map waits
+        NotifyLaunchStartServerRpc();
+
         Debug.Log($"[PlayerLauncher] Launch fired: {direction}");
     }
 
@@ -216,7 +209,7 @@ public class PlayerLauncher : NetworkBehaviour
     // CONTROL RESTORE
     // ─────────────────────────────────────────────
 
-    private void CheckRestoreControl()
+    public void CheckRestoreControl()
     {
         _timeSinceLaunch += Time.deltaTime;
 
@@ -225,10 +218,33 @@ public class PlayerLauncher : NetworkBehaviour
         if (_rb.linearVelocity.magnitude <= controlRestoreSpeed)
         {
             _hasLaunched = false;
+
+            _playerController.SetPinballActive(false);
             _playerController.SetMovementLocked(false);
+
+            // Tell server this player has landed so map can resume
+            NotifyLandedServerRpc();
 
             Debug.Log("[PlayerLauncher] Control restored");
         }
+    }
+
+    // ─────────────────────────────────────────────
+    // SERVER RPCS — MapManager notifications
+    // ─────────────────────────────────────────────
+
+    [ServerRpc]
+    private void NotifyLaunchStartServerRpc()
+    {
+        if (MapManager.Instance != null)
+            MapManager.Instance.NotifyPlayerLaunching();
+    }
+
+    [ServerRpc]
+    private void NotifyLandedServerRpc()
+    {
+        if (MapManager.Instance != null)
+            MapManager.Instance.NotifyPlayerLandedAfterLaunch();
     }
 
     // ─────────────────────────────────────────────
@@ -243,7 +259,6 @@ public class PlayerLauncher : NetworkBehaviour
         _countdownValue = 0f;
 
         ResetCountdownUI();
-
         _playerController.SetMovementLocked(true);
     }
 }

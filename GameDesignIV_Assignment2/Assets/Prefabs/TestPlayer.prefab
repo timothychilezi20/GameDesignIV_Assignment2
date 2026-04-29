@@ -193,6 +193,7 @@ GameObject:
   - component: {fileID: -8606424076601096338}
   - component: {fileID: 3981425221242441113}
   - component: {fileID: 4202549286247645757}
+  - component: {fileID: 3480070300393539775}
   m_Layer: 0
   m_Name: TestPlayer
   m_TagString: Untagged
@@ -210,7 +211,7 @@ Transform:
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 0.87475, y: 0.87475, z: 0.87475}
+  m_LocalScale: {x: 0.5, y: 0.5, z: 0.5}
   m_ConstrainProportionsScale: 1
   m_Children:
   - {fileID: 6658051200492772404}
@@ -317,7 +318,7 @@ Rigidbody:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 2228617528209205238}
   serializedVersion: 5
-  m_Mass: 1
+  m_Mass: 0.3
   m_LinearDamping: 0
   m_AngularDamping: 0.05
   m_CenterOfMass: {x: 0, y: 0, z: 0}
@@ -332,10 +333,10 @@ Rigidbody:
   m_ImplicitCom: 1
   m_ImplicitTensor: 1
   m_UseGravity: 0
-  m_IsKinematic: 0
+  m_IsKinematic: 1
   m_Interpolate: 1
   m_Constraints: 0
-  m_CollisionDetection: 0
+  m_CollisionDetection: 1
 --- !u!114 &-7681682967408421546
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -374,7 +375,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::PlayerController
   ShowTopMostFoldoutHeaderGroup: 1
-  moveSpeed: 5
+  moveSpeed: 15
   rotationSpeed: 15
   groundCheckDistance: 0.3
   mapLayerMask:
@@ -547,6 +548,22 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::PlayerCamera
   ShowTopMostFoldoutHeaderGroup: 1
   topDownCamera: {fileID: 5917288610929721954}
+--- !u!114 &3480070300393539775
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2228617528209205238}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 65d4f284cf1ed174b94b678e2202c2a7, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::PinballBounce
+  bounceSpeed: 45
+  bounceableLayers:
+    serializedVersion: 2
+    m_Bits: 128
 --- !u!1 &3882057204983322443
 GameObject:
   m_ObjectHideFlags: 0
@@ -972,7 +989,7 @@ AudioSource:
   m_audioClip: {fileID: 0}
   m_Resource: {fileID: 8300000, guid: 3ac6ffdf18880684e9415ef9fe371bc6, type: 3}
   m_PlayOnAwake: 0
-  m_Volume: 1
+  m_Volume: 0
   m_Pitch: 1
   Loop: 0
   Mute: 0
@@ -1085,9 +1102,9 @@ Transform:
   m_GameObject: {fileID: 5295540264605936067}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: 0.06342998, y: 0.024, z: 0.62043}
+  m_LocalPosition: {x: -0.011, y: 0.024, z: 0.62043}
   m_LocalScale: {x: 0.539448, y: 0.3474, z: 0.2265}
-  m_ConstrainProportionsScale: 0
+  m_ConstrainProportionsScale: 1
   m_Children: []
   m_Father: {fileID: 119413335650963359}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
@@ -1228,8 +1245,8 @@ LineRenderer:
       serializedVersion: 2
       m_Curve:
       - serializedVersion: 3
-        time: 0.053230643
-        value: 0.18007031
+        time: 0.03829992
+        value: 0.22099438
         inSlope: 0
         outSlope: 0
         tangentMode: 0

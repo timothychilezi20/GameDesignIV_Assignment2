@@ -2,11 +2,39 @@
 using UnityEngine;
 using Unity.Netcode;
 
+/// <summary>
+/// MapManager — Server-authoritative map switcher.
+///
+/// STATE MACHINE:
+///   Flat      — Both maps at rest. Active map is enabled, inactive is disabled.
+///               After flatHoldDuration the machine enters Switching.
+///   Switching — Inactive map is re-enabled just before sliding begins.
+///               Active map slides down, incoming map slides up.
+///               Once both reach their targets, inactive map is disabled and
+///               the machine returns to Flat.
+///
+/// PERFORMANCE:
+///   The inactive map's renderers and colliders are disabled while not in use
+///   and re-enabled just before the switch begins. The GameObject itself stays
+///   active so NGO NetworkBehaviour components are never interrupted.
+///
+/// SPAWN POINTS:
+///   GetSpawnPoint() always returns a point from the currently ACTIVE (up) map.
+///   CanSpawn() returns false during Switching.
+///   IsFlat() returns true only when state is Flat AND maps have physically settled.
+/// </summary>
 public class MapManager : NetworkBehaviour
 {
-    [Header("Map Transforms")]
-    public Transform map1;
-    public Transform map2;
+    // =========================================================================
+    // Inspector
+    // =========================================================================
+
+    [Header("Map GameObjects")]
+    [Tooltip("The full GameObject of map 1.")]
+    public GameObject map1Object;
+
+    [Tooltip("The full GameObject of map 2.")]
+    public GameObject map2Object;
 
     [Header("Positions")]
     public Vector3 map1UpPos;
@@ -15,59 +43,60 @@ public class MapManager : NetworkBehaviour
     public Vector3 map2DownPos;
 
     [Header("Slide Settings")]
+    [Tooltip("Units per second at which maps slide between positions.")]
     public float moveSpeed = 5f;
 
     [Header("Flat State")]
-    public float flatHoldDuration = 3f;
-
-    [Header("Switch Settings")]
-    public int flatPhasesBeforeSwap = 2;
-
-    [Header("Tilt Settings")]
-    public float minTiltAngle = 35f;
-    public float maxTiltAngle = 40f;
-    public float tiltSpeed = 8f;
-    public float tiltHoldDuration = 3f;
+    [Tooltip("How long (seconds) the active map stays flat before the next swap.")]
+    public float flatHoldDuration = 10f;
 
     [Header("Spawn Points")]
+    [Tooltip("Spawn points that belong to map 1. Assign as children of map1Object.")]
     [SerializeField] private Transform[] map1SpawnPoints;
+
+    [Tooltip("Spawn points that belong to map 2. Assign as children of map2Object.")]
     [SerializeField] private Transform[] map2SpawnPoints;
 
-    // Drag your LaunchPoint GameObject here in the Inspector
-    [Header("Launch Gate")]
-    public LaunchPoint launchPoint;
-
     // =========================================================================
-    // Network state
+    // Network state  (server writes → all clients read)
     // =========================================================================
 
-    private enum MapState : byte { WaitingForLaunch, Flat, Switching, Tilting }
+    private enum MapState : byte { Flat, Switching }
 
     private NetworkVariable<MapState> netState = new NetworkVariable<MapState>(
-        MapState.WaitingForLaunch,
+        MapState.Flat,
         NetworkVariableReadPermission.Everyone,
         NetworkVariableWritePermission.Server);
 
+    /// True = map1 is the active (up) map.
     private NetworkVariable<bool> netMap1Active = new NetworkVariable<bool>(
         true,
         NetworkVariableReadPermission.Everyone,
         NetworkVariableWritePermission.Server);
 
-    private NetworkVariable<float> netTilt = new NetworkVariable<float>(
-        0f,
-        NetworkVariableReadPermission.Everyone,
-        NetworkVariableWritePermission.Server);
+    // =========================================================================
+    // Cached Transform references
+    // =========================================================================
+
+    private Transform map1;
+    private Transform map2;
 
     // =========================================================================
     // Server-only state
     // =========================================================================
 
     private float stateTimer;
-    private float targetTilt;
-    private int flatPhaseCount;
-    private bool tiltingIn;
     private int spawnIndex;
+    private bool incomingEnabled = false;
+    private int _playersLaunching = 0;
+
     private List<Transform> trackedPlayers = new List<Transform>();
+
+    private bool AnyPlayerLaunching => _playersLaunching > 0;
+
+    // =========================================================================
+    // Singleton
+    // =========================================================================
 
     public static MapManager Instance { get; private set; }
 
@@ -75,12 +104,26 @@ public class MapManager : NetworkBehaviour
     {
         if (Instance != null && Instance != this) { Destroy(gameObject); return; }
         Instance = this;
+
+        map1 = map1Object.transform;
+        map2 = map2Object.transform;
     }
+
+    // =========================================================================
+    // Network spawn
+    // =========================================================================
 
     public override void OnNetworkSpawn()
     {
         base.OnNetworkSpawn();
-        if (IsServer) { flatPhaseCount = 0; spawnIndex = 0; }
+
+        if (IsServer)
+        {
+            spawnIndex = 0;
+            EnterFlat();
+        }
+
+        ApplyActiveState();
     }
 
     // =========================================================================
@@ -93,63 +136,61 @@ public class MapManager : NetworkBehaviour
         ApplyVisuals();
     }
 
+    // =========================================================================
+    // Server tick
+    // =========================================================================
+
     private void ServerTick()
     {
         switch (netState.Value)
         {
-            case MapState.WaitingForLaunch:
-                // Poll LaunchPoint — the moment both players are out, start the map
-                if (launchPoint != null && launchPoint.BothLaunched)
-                    EnterFlat();
-                break;
-
             case MapState.Flat: TickFlat(); break;
             case MapState.Switching: TickSwitching(); break;
-            case MapState.Tilting: TickTilting(); break;
         }
     }
 
-    // ── Flat ──────────────────────────────────────────────────────────────────
+    // =========================================================================
+    // FLAT
+    // =========================================================================
 
     private void EnterFlat()
     {
         netState.Value = MapState.Flat;
-        netTilt.Value = 0f;
         stateTimer = 0f;
+        incomingEnabled = false;
+
+        SetInactiveMapEnabled(false);
     }
 
     private void TickFlat()
     {
-        stateTimer += Time.deltaTime;
-        if (stateTimer < flatHoldDuration) return;
+        // Pause the swap timer while any player is still mid-launch
+        if (AnyPlayerLaunching) return;
 
-        flatPhaseCount++;
-        if (flatPhaseCount >= flatPhasesBeforeSwap)
-        {
-            flatPhaseCount = 0;
+        stateTimer += Time.deltaTime;
+        if (stateTimer >= flatHoldDuration)
             EnterSwitching();
-        }
-        else
-        {
-            EnterTilting();
-        }
     }
 
-    // ── Switching ─────────────────────────────────────────────────────────────
+    // =========================================================================
+    // SWITCHING
+    // =========================================================================
 
     private void EnterSwitching()
     {
-        bool incomingMap1 = !netMap1Active.Value;
-        Transform incomingMap = incomingMap1 ? map1 : map2;
-
-        foreach (Transform player in trackedPlayers)
+        if (AnyPlayerLaunching)
         {
-            if (player == null) continue;
-            Rigidbody rb = player.GetComponent<Rigidbody>();
-            if (rb != null) rb.interpolation = RigidbodyInterpolation.None;
-            player.SetParent(incomingMap, worldPositionStays: true);
+            Debug.Log("[MapManager] Switching deferred — player still launching.");
+            return;
         }
 
+        if (!incomingEnabled)
+        {
+            SetInactiveMapEnabled(true);
+            incomingEnabled = true;
+        }
+
+        // Flip active flag — ApplyVisuals will start sliding both maps
         netMap1Active.Value = !netMap1Active.Value;
         netState.Value = MapState.Switching;
         stateTimer = 0f;
@@ -166,51 +207,13 @@ public class MapManager : NetworkBehaviour
 
         if (!done) return;
 
-        foreach (Transform player in trackedPlayers)
-        {
-            if (player == null) continue;
-            player.SetParent(null, worldPositionStays: true);
-            Rigidbody rb = player.GetComponent<Rigidbody>();
-            if (rb != null) rb.interpolation = RigidbodyInterpolation.Interpolate;
-        }
-
+        OnMapSwitched?.Invoke();
         EnterFlat();
     }
 
-    // ── Tilting ───────────────────────────────────────────────────────────────
-
-    private void EnterTilting()
-    {
-        targetTilt = Random.Range(minTiltAngle, maxTiltAngle);
-        tiltingIn = true;
-        stateTimer = 0f;
-        netState.Value = MapState.Tilting;
-    }
-
-    private void TickTilting()
-    {
-        float current = netTilt.Value;
-
-        if (tiltingIn)
-        {
-            current = Mathf.MoveTowards(current, targetTilt, tiltSpeed * Time.deltaTime);
-            netTilt.Value = current;
-
-            if (Mathf.Approximately(current, targetTilt))
-            { tiltingIn = false; stateTimer = 0f; }
-        }
-        else
-        {
-            if (stateTimer < tiltHoldDuration) { stateTimer += Time.deltaTime; return; }
-
-            current = Mathf.MoveTowards(current, 0f, tiltSpeed * Time.deltaTime);
-            netTilt.Value = current;
-
-            if (current <= 0f) { netTilt.Value = 0f; EnterFlat(); }
-        }
-    }
-
-    // ── Visuals — all clients ─────────────────────────────────────────────────
+    // =========================================================================
+    // Visuals — all clients
+    // =========================================================================
 
     private void ApplyVisuals()
     {
@@ -221,44 +224,145 @@ public class MapManager : NetworkBehaviour
         map1.position = Vector3.MoveTowards(map1.position, target1, moveSpeed * Time.deltaTime);
         map2.position = Vector3.MoveTowards(map2.position, target2, moveSpeed * Time.deltaTime);
 
-        // Only the active (top) map tilts — bottom stays flat
-        if (active)
-        {
-            map1.localRotation = Quaternion.Euler(netTilt.Value, 0f, 0f);
-            map2.localRotation = Quaternion.identity;
-        }
-        else
-        {
-            map1.localRotation = Quaternion.identity;
-            map2.localRotation = Quaternion.Euler(netTilt.Value, 0f, 0f);
-        }
+        map1.localRotation = Quaternion.identity;
+        map2.localRotation = Quaternion.identity;
     }
 
-    // ── Public API ────────────────────────────────────────────────────────────
+    // =========================================================================
+    // Enable / disable inactive map
+    // =========================================================================
 
-    public Transform GetActiveMap() => netMap1Active.Value ? map1 : map2;
+    /// <summary>
+    /// Toggles renderers and colliders on the INACTIVE map only.
+    /// The GameObject itself is never disabled so NGO components stay alive.
+    /// </summary>
+    private void SetInactiveMapEnabled(bool enabled)
+    {
+        bool map1Active = netMap1Active.Value;
+
+        if (map1Active)
+            SetMap2VisibilityClientRpc(enabled);
+        else
+            SetMap1VisibilityClientRpc(enabled);
+    }
+
+    [ClientRpc]
+    private void SetMap1VisibilityClientRpc(bool enabled)
+        => SetMapVisibility(map1Object, enabled);
+
+    [ClientRpc]
+    private void SetMap2VisibilityClientRpc(bool enabled)
+        => SetMapVisibility(map2Object, enabled);
+
+    private void SetMapVisibility(GameObject mapObject, bool enabled)
+    {
+        if (mapObject == null) return;
+
+        foreach (Renderer r in mapObject.GetComponentsInChildren<Renderer>(true))
+            r.enabled = enabled;
+
+        foreach (Collider c in mapObject.GetComponentsInChildren<Collider>(true))
+            c.enabled = enabled;
+    }
+
+    /// <summary>
+    /// Applies the correct visible/hidden state to both maps on spawn.
+    /// </summary>
+    private void ApplyActiveState()
+    {
+        bool map1Active = netMap1Active.Value;
+        SetMapVisibility(map1Object, map1Active);   // active map   — visible + collidable
+        SetMapVisibility(map2Object, !map1Active);   // inactive map — hidden  + no collision
+    }
+
+    // =========================================================================
+    // Public API
+    // =========================================================================
+
+    /// <summary>
+    /// Fired on the server when a map switch completes and the new map is flat.
+    /// Subscribe to react to map changes (e.g. clearing and restocking targets).
+    /// </summary>
+    public event System.Action OnMapSwitched;
+
+    /// <summary>
+    /// Returns false during Switching — callers must not spawn then.
+    /// </summary>
     public bool CanSpawn() => netState.Value != MapState.Switching;
-    public bool IsLive() => netState.Value != MapState.WaitingForLaunch;
 
+    /// <summary>
+    /// Returns true only when the state machine is in Flat AND both map
+    /// Transforms have physically reached their target positions.
+    /// Use this before placing players so they are never spawned onto a
+    /// still-moving map surface.
+    /// </summary>
+    public bool IsFlat()
+    {
+        if (netState.Value != MapState.Flat) return false;
+
+        bool active = netMap1Active.Value;
+        Vector3 target1 = active ? map1UpPos : map1DownPos;
+        Vector3 target2 = active ? map2DownPos : map2UpPos;
+
+        return Vector3.Distance(map1.position, target1) < 0.01f &&
+               Vector3.Distance(map2.position, target2) < 0.01f;
+    }
+
+    /// <summary>
+    /// Called by PlayerLauncher (via ServerRpc) when a player fires their launch.
+    /// Prevents map switching until all mid-launch players have landed.
+    /// </summary>
+    public void NotifyPlayerLaunching()
+    {
+        if (!IsServer) return;
+        _playersLaunching++;
+        Debug.Log($"[MapManager] Player launching. Active launches: {_playersLaunching}");
+    }
+
+    /// <summary>
+    /// Called by PlayerLauncher (via ServerRpc) once the player has slowed to a stop.
+    /// </summary>
+    public void NotifyPlayerLandedAfterLaunch()
+    {
+        if (!IsServer) return;
+        _playersLaunching = Mathf.Max(0, _playersLaunching - 1);
+        Debug.Log($"[MapManager] Player landed. Active launches: {_playersLaunching}");
+    }
+
+    /// <summary>
+    /// Returns the next spawn point on the ACTIVE (up) map, round-robin.
+    /// Always check CanSpawn() and IsFlat() before calling this.
+    /// </summary>
     public Transform GetSpawnPoint()
     {
         Transform[] points = netMap1Active.Value ? map1SpawnPoints : map2SpawnPoints;
+
         if (points == null || points.Length == 0)
         {
-            Debug.LogError("[MapManager] No spawn points assigned.");
+            Debug.LogError($"[MapManager] No spawn points on active map " +
+                           $"(map{(netMap1Active.Value ? "1" : "2")}).");
             return null;
         }
+
         Transform chosen = points[spawnIndex % points.Length];
         spawnIndex = (spawnIndex + 1) % points.Length;
         return chosen;
     }
 
+    /// <summary>Returns the Transform of whichever map is currently active (up).</summary>
+    public Transform GetActiveMap() => netMap1Active.Value ? map1 : map2;
+
+    /// <summary>
+    /// Register a player Transform so MapManager can track it.
+    /// Call on the server after the player spawns.
+    /// </summary>
     public void RegisterPlayer(Transform playerTransform)
     {
         if (!IsServer || trackedPlayers.Contains(playerTransform)) return;
         trackedPlayers.Add(playerTransform);
     }
 
+    /// <summary>Unregister on disconnect or death.</summary>
     public void UnregisterPlayer(Transform playerTransform)
     {
         if (!IsServer) return;
