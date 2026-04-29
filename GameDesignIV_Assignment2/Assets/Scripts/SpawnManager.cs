@@ -9,10 +9,12 @@ using System.Collections;
 ///
 /// FLOW:
 ///   1. Server waits for both players' NetworkObjects to be ready.
-///   2. PlacePlayerClientRpc fires on the owning client — bakes launch direction,
+///   2. Waits for MapManager.IsFlat() — ensures the map has physically settled
+///      before any player is placed (prevents host sliding on a moving map).
+///   3. PlacePlayerClientRpc fires on the owning client — bakes launch direction,
 ///      calls PlaceAtSpawnPoint, resets launcher state.
-///   3. StartCountdownClientRpc fires — countdown begins, auto-fires at zero.
-///   4. On respawn, waits for MapManager.CanSpawn(), then repeats steps 2–3.
+///   4. StartCountdownClientRpc fires once both players are placed.
+///   5. On respawn, waits for MapManager.CanSpawn(), then repeats steps 3–4.
 /// </summary>
 public class SpawnManager : NetworkBehaviour
 {
@@ -88,7 +90,7 @@ public class SpawnManager : NetworkBehaviour
 
     private IEnumerator InitialSpawnCoroutine(ulong clientId, Transform spawnPoint, bool isPlayer1)
     {
-        // Wait until the player's NetworkObject is fully ready
+        // ── Step 1: wait for this player's NetworkObject to be ready ─────────
         NetworkClient client = null;
         float elapsed = 0f;
 
@@ -114,21 +116,28 @@ public class SpawnManager : NetworkBehaviour
             yield break;
         }
 
-        // Register with MapManager so player rides map transitions
+        if (isPlayer1) _player1Ready = true;
+        else _player2Ready = true;
+
+        // ── Step 2: wait until BOTH players are connected and ready ──────────
+        // The host is frozen here until the client joins. This prevents the host
+        // from being placed on a still-sliding map and drifting before the match starts.
+        while (!_player1Ready || !_player2Ready)
+            yield return null;
+
+        // ── Step 3: register and place ───────────────────────────────────────
         if (MapManager.Instance != null)
             MapManager.Instance.RegisterPlayer(client.PlayerObject.transform);
 
-        // Place player and bake launch direction from the spawn point's forward
         PlacePlayerClientRpc(clientId,
                              spawnPoint.position,
                              spawnPoint.rotation,
                              spawnPoint.forward);
 
-        if (isPlayer1) _player1Ready = true;
-        else _player2Ready = true;
-
-        // Start both countdowns once both players are placed
-        if (_player1Ready && _player2Ready)
+        // ── Step 4: start both countdowns once both players are placed ────────
+        // Only the second coroutine to reach here (client's) triggers the countdowns
+        // since both ready flags are true at that point.
+        if (isPlayer1 == false)
             StartCoroutine(BeginCountdowns());
     }
 
@@ -200,7 +209,7 @@ public class SpawnManager : NetworkBehaviour
         //    the correct forward when the countdown fires
         player.SetLaunchDirection(launchDirection);
 
-        // 2. Place the Rigidbody at the corrected surface position
+        // 2. Place the Rigidbody at the spawn point position
         player.PlaceAtSpawnPoint(position, rotation);
 
         // 3. Sync NetworkTransform so remote clients see the correct position

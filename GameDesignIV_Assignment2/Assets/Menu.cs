@@ -10,7 +10,7 @@ public class Menu : MonoBehaviour
     [SerializeField] private TMP_InputField portInput;
 
     [Header("Defaults")]
-    [SerializeField] private string defaultIP = "127.0.0.1";
+    [SerializeField] private string defaultIP = "10.231.156.26";
     [SerializeField] private ushort defaultPort = 7777;
 
     [SerializeField] private UnityTransport transport;
